@@ -15,8 +15,10 @@ import { registerTaskTools } from "../tools/tasks.js";
 import { registerCalendarTools } from "../tools/calendar.js";
 import { registerActivityTools } from "../tools/activities.js";
 import { registerBillingTools } from "../tools/billing.js";
+import { registerCommunicationTools } from "../tools/communications.js";
 import { registerNoteTools } from "../tools/notes.js";
 import { registerUserTools } from "../tools/users.js";
+import { applyWriteGate } from "../esq/writeGate.js";
 import { registerAuditExportTool } from "../tools/auditExport.js";
 import { buildAuthorizationUrl, exchangeCodeForTokensPure, refreshTokensPure } from "../auth/oauth.js";
 import type { ClioTokens } from "../auth/oauth.js";
@@ -35,6 +37,7 @@ const sessions = new Map<string, SessionRecord>();
 
 function createMcpServer(): McpServer {
   const server = new McpServer({ name: "clio-mcp", version: pkg.version });
+  applyWriteGate(server); // ESQ fork: withhold Clio-mutating tools unless allowlisted
   registerAuthTools(server);
   registerResources(server);
   registerMatterTools(server);
@@ -44,6 +47,7 @@ function createMcpServer(): McpServer {
   registerCalendarTools(server);
   registerActivityTools(server);
   registerBillingTools(server);
+  registerCommunicationTools(server);
   registerNoteTools(server);
   registerUserTools(server);
   registerAuditExportTool(server);

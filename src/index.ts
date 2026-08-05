@@ -30,11 +30,14 @@ async function main() {
         const { registerCalendarTools } = await import("./tools/calendar.js");
         const { registerActivityTools } = await import("./tools/activities.js");
         const { registerBillingTools } = await import("./tools/billing.js");
+        const { registerCommunicationTools } = await import("./tools/communications.js");
         const { registerNoteTools } = await import("./tools/notes.js");
         const { registerUserTools } = await import("./tools/users.js");
         const { registerAuditExportTool } = await import("./tools/auditExport.js");
+        const { applyWriteGate } = await import("./esq/writeGate.js");
 
         const server = new McpServer({ name: "clio-mcp", version: pkg.version });
+        applyWriteGate(server); // ESQ fork: withhold Clio-mutating tools unless allowlisted
         registerAuthTools(server);
         registerResources(server);
         registerMatterTools(server);
@@ -44,6 +47,7 @@ async function main() {
         registerCalendarTools(server);
         registerActivityTools(server);
         registerBillingTools(server);
+        registerCommunicationTools(server);
         registerNoteTools(server);
         registerUserTools(server);
         registerAuditExportTool(server);
