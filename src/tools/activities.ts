@@ -8,7 +8,7 @@ const ACTIVITY_FIELDS =
   "billed,on_bill,non_billable,no_charge,tax_setting,created_at,updated_at," +
   "activity_description{id,name},matter{id,display_number},user{id,name}";
 
-const ACTIVITY_DESCRIPTION_FIELDS = "id,name,visible,default,flat_rate,rate,created_at,updated_at";
+const ACTIVITY_DESCRIPTION_FIELDS = "id,name,default,rate,created_at,updated_at";
 
 export function registerActivityTools(server: McpServer): void {
   server.registerTool(

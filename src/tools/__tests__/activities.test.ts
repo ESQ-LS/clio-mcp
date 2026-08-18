@@ -106,14 +106,20 @@ describe("get_time_entry", () => {
 describe("list_activity_descriptions", () => {
   it("returns activity descriptions and a continuation cursor", async () => {
     mockClioGet.mockResolvedValueOnce({
-      data: [{ id: 8, name: "Legal services", visible: true }],
+      data: [{ id: 8, name: "Legal services", default: false, rate: 300 }],
       meta: { next_page_token: "next-2" },
     });
     const { handlers } = buildServer();
     const result = await handlers["list_activity_descriptions"]({ limit: 1 }) as any;
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.activity_descriptions).toEqual([{ id: 8, name: "Legal services", visible: true }]);
+    expect(parsed.activity_descriptions).toEqual([{ id: 8, name: "Legal services", default: false, rate: 300 }]);
     expect(parsed.next_page_token).toBe("next-2");
+    expect(mockClioGet).toHaveBeenCalledWith(
+      "/activity_descriptions.json",
+      expect.objectContaining({
+        fields: "id,name,default,rate,created_at,updated_at",
+      }),
+    );
   });
 });
 
