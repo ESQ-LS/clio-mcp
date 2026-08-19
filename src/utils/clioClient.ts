@@ -1,5 +1,6 @@
 import { getValidAccessToken } from "../auth/oauth.js";
 import { getSessionContext } from "./sessionContext.js";
+import { getClioApiBase } from "./clioRegion.js";
 
 async function resolveAccessToken(): Promise<string> {
   const ctx = getSessionContext();
@@ -15,9 +16,7 @@ export class ClioApiError extends Error {
 }
 
 function getBase() {
-  const region = (process.env.CLIO_REGION ?? "us").toLowerCase();
-  const clioBase = region === "eu" ? "https://eu.app.clio.com" : "https://app.clio.com";
-  return process.env.CLIO_API_BASE ?? `${clioBase}/api/v4`;
+  return getClioApiBase();
 }
 export function getClioBaseUrl(): string {
   return getBase();
