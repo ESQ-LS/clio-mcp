@@ -1,0 +1,2 @@
+Deploy esq/main OAuth persistence fix to ca-esq-clio-mcp production.
+Requested 2026-08-18 America/Toronto.

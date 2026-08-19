@@ -1,0 +1,135 @@
+name: Deploy ESQ Clio MCP to Azure
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - esq/main
+    paths:
+      - deploy/production-trigger.txt
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: esq-clio-mcp-production
+  cancel-in-progress: false
+
+env:
+  CONTAINER_APP_NAME: ca-esq-clio-mcp
+  AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout esq/main
+        uses: actions/checkout@v4
+        with:
+          ref: esq/main
+
+      - name: Select Azure authentication mode
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${AZURE_CLIENT_ID}" && -n "${AZURE_TENANT_ID}" && -n "${AZURE_SUBSCRIPTION_ID}" ]]; then
+            echo "mode=oidc" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${AZURE_CREDENTIALS}" ]]; then
+            echo "mode=creds" >> "$GITHUB_OUTPUT"
+          else
+            echo "No Azure GitHub identity is configured. Expected AZURE_CLIENT_ID/AZURE_TENANT_ID/AZURE_SUBSCRIPTION_ID as repo/org vars or secrets, or AZURE_CREDENTIALS as a secret." >&2
+            exit 1
+          fi
+
+      - name: Azure login with OIDC
+        if: steps.auth.outputs.mode == 'oidc'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure login with service-principal credentials
+        if: steps.auth.outputs.mode == 'creds'
+        uses: azure/login@v2
+        with:
+          creds: ${{ env.AZURE_CREDENTIALS }}
+
+      - name: Install Container Apps CLI extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade --yes
+
+      - name: Discover existing production app and registry
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_JSON="$(az containerapp list --query "[?name=='${CONTAINER_APP_NAME}'].{name:name,rg:resourceGroup,containers:properties.template.containers,image:properties.template.containers[0].image}" -o json)"
+          COUNT="$(jq 'length' <<<"$APP_JSON")"
+          if [[ "$COUNT" != "1" ]]; then
+            echo "Expected exactly one Container App named ${CONTAINER_APP_NAME}; found ${COUNT}. Aborting." >&2
+            exit 1
+          fi
+          CONTAINER_COUNT="$(jq '.[0].containers | length' <<<"$APP_JSON")"
+          if [[ "$CONTAINER_COUNT" != "1" ]]; then
+            echo "Expected one application container; found ${CONTAINER_COUNT}. Aborting rather than changing a multi-container app." >&2
+            exit 1
+          fi
+          RG="$(jq -r '.[0].rg' <<<"$APP_JSON")"
+          CURRENT_IMAGE="$(jq -r '.[0].image' <<<"$APP_JSON")"
+          REGISTRY_HOST="${CURRENT_IMAGE%%/*}"
+          if [[ "$REGISTRY_HOST" != *.azurecr.io ]]; then
+            echo "Current production image is not in Azure Container Registry (${CURRENT_IMAGE}). Aborting rather than introducing a new registry." >&2
+            exit 1
+          fi
+          ACR_NAME="${REGISTRY_HOST%.azurecr.io}"
+          IMAGE_REPOSITORY="${CURRENT_IMAGE#*/}"
+          IMAGE_REPOSITORY="${IMAGE_REPOSITORY%@*}"
+          IMAGE_REPOSITORY="${IMAGE_REPOSITORY%:*}"
+          NEW_IMAGE="${REGISTRY_HOST}/${IMAGE_REPOSITORY}:${GITHUB_SHA}"
+          echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
+          echo "acr_name=$ACR_NAME" >> "$GITHUB_OUTPUT"
+          echo "image_repository=$IMAGE_REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "new_image=$NEW_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Target: ${CONTAINER_APP_NAME} in resource group ${RG}; image repository ${REGISTRY_HOST}/${IMAGE_REPOSITORY}."
+
+      - name: Build image in existing ACR
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr build \
+            --registry "${{ steps.target.outputs.acr_name }}" \
+            --image "${{ steps.target.outputs.image_repository }}:${GITHUB_SHA}" \
+            --file Dockerfile \
+            .
+
+      - name: Deploy image only
+        shell: bash
+        run: |
+          set -euo pipefail
+          az containerapp update \
+            --name "${CONTAINER_APP_NAME}" \
+            --resource-group "${{ steps.target.outputs.resource_group }}" \
+            --image "${{ steps.target.outputs.new_image }}" \
+            --output none
+
+      - name: Verify live revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOYED_IMAGE="$(az containerapp show --name "${CONTAINER_APP_NAME}" --resource-group "${{ steps.target.outputs.resource_group }}" --query 'properties.template.containers[0].image' -o tsv)"
+          if [[ "$DEPLOYED_IMAGE" != "${{ steps.target.outputs.new_image }}" ]]; then
+            echo "Container App reports unexpected image: ${DEPLOYED_IMAGE}" >&2
+            exit 1
+          fi
+          FQDN="$(az containerapp show --name "${CONTAINER_APP_NAME}" --resource-group "${{ steps.target.outputs.resource_group }}" --query 'properties.configuration.ingress.fqdn' -o tsv)"
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 "https://${FQDN}/health"
+          echo
+          az containerapp show --name "${CONTAINER_APP_NAME}" --resource-group "${{ steps.target.outputs.resource_group }}" --query '{latestRevision:properties.latestRevisionName,image:properties.template.containers[0].image}' -o json
