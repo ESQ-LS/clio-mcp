@@ -1,7 +1,6 @@
 import express from "express";
 import { readFileSync } from "fs";
 import { randomUUID } from "crypto";
-import { timingSafeEqual } from "crypto";
 
 const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -17,11 +16,17 @@ import { registerActivityTools } from "../tools/activities.js";
 import { registerBillingTools } from "../tools/billing.js";
 import { registerCommunicationTools } from "../tools/communications.js";
 import { registerNoteTools } from "../tools/notes.js";
-import { registerUserTools } from "../tools/users.js";
 import { applyWriteGate } from "../esq/writeGate.js";
+import { registerUserTools } from "../tools/users.js";
 import { registerAuditExportTool } from "../tools/auditExport.js";
-import { buildAuthorizationUrl, exchangeCodeForTokensPure, refreshTokensPure } from "../auth/oauth.js";
+import {
+  exchangeCodeForTokensPure,
+  refreshTokensPure,
+  resolveClioUserId,
+  validateAuthorizationState,
+} from "../auth/oauth.js";
 import type { ClioTokens } from "../auth/oauth.js";
+import { loadTokens, saveTokens } from "../auth/tokenStorage.js";
 import { sessionStorage, SessionContext } from "../utils/sessionContext.js";
 import { appendAuditLog } from "../utils/auditLog.js";
 
@@ -29,7 +34,6 @@ interface SessionRecord {
   transport: StreamableHTTPServerTransport;
   mcpServer: McpServer | null;
   tokens: ClioTokens | null;
-  pendingOAuthNonce: string | null;
   createdAt: number;
 }
 
@@ -58,26 +62,34 @@ function buildSessionContext(record: SessionRecord, sessionId: string): SessionC
   return {
     sessionId,
     getAccessToken: async () => {
-      if (!record.tokens) {
+      let tokens = record.tokens ?? await loadTokens();
+      if (!tokens) {
         throw new Error(
           "Not authenticated. Call the 'authenticate' tool to get a login URL, " +
           "complete OAuth in your browser, then try again."
         );
       }
-      if (Date.now() > record.tokens.expires_at - 5 * 60 * 1000) {
-        const refreshed = await refreshTokensPure(record.tokens.refresh_token);
-        record.tokens = { ...refreshed, clio_user_id: record.tokens.clio_user_id };
+
+      if (Date.now() > tokens.expires_at - 5 * 60 * 1000) {
+        const refreshed = await refreshTokensPure(tokens.refresh_token);
+        tokens = {
+          ...refreshed,
+          clio_user_id: tokens.clio_user_id,
+          user_id_unavailable: tokens.user_id_unavailable,
+        };
+        await saveTokens(tokens);
       }
-      return record.tokens.access_token;
+
+      record.tokens = tokens;
+      return tokens.access_token;
     },
     storeTokens: (tokens: ClioTokens) => { record.tokens = tokens; },
     getTokens: () => record.tokens,
     clearTokens: () => { record.tokens = null; },
-    setPendingNonce: (nonce: string) => { record.pendingOAuthNonce = nonce; },
+    setPendingNonce: () => {},
   };
 }
 
-// Stale session GC: remove sessions older than 24 hours
 setInterval(() => {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   for (const [id, rec] of sessions) {
@@ -114,12 +126,10 @@ app.all("/mcp", requireApiKey, express.json(), async (req, res) => {
     const incomingSessionId = req.headers["mcp-session-id"] as string | undefined;
 
     if (!incomingSessionId) {
-      // New connection: allocate record and create transport
       const record: SessionRecord = {
         transport: null!,
         mcpServer: null,
         tokens: null,
-        pendingOAuthNonce: null,
         createdAt: Date.now(),
       };
 
@@ -136,8 +146,6 @@ app.all("/mcp", requireApiKey, express.json(), async (req, res) => {
       });
       record.transport = transport;
 
-      // Use a temporary placeholder context for the initialize request.
-      // No tools run during initialization, so getAccessToken is never called.
       const tempCtx: SessionContext = {
         sessionId: "",
         getAccessToken: async () => { throw new Error("Not authenticated"); },
@@ -147,26 +155,19 @@ app.all("/mcp", requireApiKey, express.json(), async (req, res) => {
         setPendingNonce: () => {},
       };
 
-      await sessionStorage.run(tempCtx, () =>
-        transport.handleRequest(req, res, req.body)
-      );
+      await sessionStorage.run(tempCtx, () => transport.handleRequest(req, res, req.body));
     } else {
-      // Existing session: route to correct transport
       const record = sessions.get(incomingSessionId);
       if (!record) {
         res.status(404).json({ error: "Session not found" });
         return;
       }
       const ctx = buildSessionContext(record, incomingSessionId);
-      await sessionStorage.run(ctx, () =>
-        record.transport.handleRequest(req, res, req.body)
-      );
+      await sessionStorage.run(ctx, () => record.transport.handleRequest(req, res, req.body));
     }
   } catch (err: any) {
     console.error("[http] /mcp error:", err.message);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Internal server error" });
-    }
+    if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -186,55 +187,25 @@ app.get("/oauth/callback", async (req, res) => {
   }
 
   let sessionId: string;
-  let nonce: string;
   try {
-    const payload = Buffer.from(state, "base64url").toString("utf8");
-    const colonIdx = payload.indexOf(":");
-    sessionId = payload.slice(0, colonIdx);
-    nonce = payload.slice(colonIdx + 1);
-  } catch {
-    res.status(400).send("<h1>Bad Request</h1><p>Invalid state parameter.</p>");
+    ({ session_id: sessionId } = validateAuthorizationState(state));
+  } catch (err: any) {
+    res.status(400).send(`<h1>Invalid State</h1><p>${err.message}</p>`);
     return;
   }
-
-  const record = sessions.get(sessionId);
-  if (!record || !record.pendingOAuthNonce) {
-    res.status(400).send("<h1>Session Not Found</h1><p>Unknown or expired session. Please try again.</p>");
-    return;
-  }
-
-  // Constant-time comparison to prevent timing attacks
-  const expectedBuf = Buffer.from(record.pendingOAuthNonce, "utf8");
-  const actualBuf = Buffer.from(nonce, "utf8");
-  const nonceValid =
-    expectedBuf.length === actualBuf.length &&
-    timingSafeEqual(expectedBuf, actualBuf);
-
-  if (!nonceValid) {
-    res.status(400).send("<h1>Invalid State</h1><p>State mismatch — possible CSRF attack.</p>");
-    return;
-  }
-
-  record.pendingOAuthNonce = null;
 
   try {
-    const redirectUri = `${(process.env.MCP_BASE_URL ?? "").trim()}/oauth/callback`;
+    const baseUrl = (process.env.MCP_BASE_URL ?? "").trim().replace(/\/+$/, "");
+    const redirectUri = `${baseUrl}/oauth/callback`;
     const tokens = await exchangeCodeForTokensPure(code, redirectUri);
+    await resolveClioUserId(tokens);
 
-    // Attempt to resolve clio_user_id from who_am_i
-    try {
-      const region = (process.env.CLIO_REGION ?? "us").toLowerCase();
-      const clioBase = region === "eu" ? "https://eu.app.clio.com" : "https://app.clio.com";
-      const meRes = await fetch(`${clioBase}/api/v4/users/who_am_i.json`, {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
-      });
-      if (meRes.ok) {
-        const me = await meRes.json() as any;
-        tokens.clio_user_id = String(me.data?.id);
-      }
-    } catch { /* non-fatal */ }
+    // Persist independently of the MCP transport session. The browser callback may
+    // arrive after the originating MCP session was closed.
+    await saveTokens(tokens);
 
-    record.tokens = tokens;
+    const record = sessions.get(sessionId);
+    if (record) record.tokens = tokens;
 
     await appendAuditLog({
       tool: "oauth_callback",
@@ -245,8 +216,8 @@ app.get("/oauth/callback", async (req, res) => {
 
     res.send(
       `<!DOCTYPE html><html><head><title>Authentication Successful</title></head>` +
-      `<body><h1>✅ Authentication Successful</h1>` +
-      `<p>You are now connected to Clio. You can close this tab and return to Claude.</p>` +
+      `<body><h1>Authentication Successful</h1>` +
+      `<p>You are now connected to Clio. You can close this tab and return to ChatGPT.</p>` +
       `</body></html>`
     );
   } catch (err: any) {

@@ -10,7 +10,7 @@ export function registerAuthTools(server: McpServer): void {
     { description: "Check whether the connector is authenticated with Clio and when the token expires" },
     async () => {
       const ctx = getSessionContext();
-      const tokens = ctx ? ctx.getTokens() : await loadTokens();
+      const tokens = ctx?.getTokens() ?? await loadTokens();
 
       await appendAuditLog({
         tool: "auth_status",
@@ -20,9 +20,7 @@ export function registerAuthTools(server: McpServer): void {
       });
 
       if (!tokens) {
-        return {
-          content: [{ type: "text", text: JSON.stringify({ authenticated: false }) }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify({ authenticated: false }) }] };
       }
 
       const expiresIn = Math.floor((tokens.expires_at - Date.now()) / 1000 / 60);
@@ -34,7 +32,7 @@ export function registerAuthTools(server: McpServer): void {
             authenticated: true,
             clio_user_id: tokens.clio_user_id
               ?? (tokens.user_id_unavailable
-                ? "unavailable — Clio app lacks user-profile permission (HTTP 403 on who_am_i)"
+                ? "unavailable - Clio app lacks user-profile permission (HTTP 403 on who_am_i)"
                 : "unknown"),
             token_expires_in_minutes: expiresIn,
             token_expired,
@@ -51,10 +49,8 @@ export function registerAuthTools(server: McpServer): void {
     async () => {
       const ctx = getSessionContext();
       if (ctx) {
-        // HTTP mode: return a URL for the user to visit in their browser
         try {
-          const { url, nonce } = buildAuthorizationUrl(ctx.sessionId);
-          ctx.setPendingNonce(nonce);
+          const { url } = buildAuthorizationUrl(ctx.sessionId);
           await appendAuditLog({ tool: "authenticate", args: {}, outcome: "success" });
           return {
             content: [{
@@ -64,26 +60,17 @@ export function registerAuthTools(server: McpServer): void {
           };
         } catch (err: any) {
           await appendAuditLog({ tool: "authenticate", args: {}, outcome: "error", error_message: err.message });
-          return {
-            content: [{ type: "text", text: `❌ Error: ${err.message}` }],
-            isError: true,
-          };
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
         }
       }
 
-      // stdio mode: run browser-based OAuth flow
       try {
         await getValidAccessToken();
         await appendAuditLog({ tool: "authenticate", args: {}, outcome: "success" });
-        return {
-          content: [{ type: "text", text: "✅ Successfully authenticated with Clio!" }],
-        };
+        return { content: [{ type: "text", text: "Successfully authenticated with Clio!" }] };
       } catch (err: any) {
         await appendAuditLog({ tool: "authenticate", args: {}, outcome: "error", error_message: err.message });
-        return {
-          content: [{ type: "text", text: `❌ Error: ${err.message}` }],
-          isError: true,
-        };
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }
     }
   );
@@ -94,24 +81,15 @@ export function registerAuthTools(server: McpServer): void {
     async () => {
       const ctx = getSessionContext();
       try {
-        const clio_user_id = ctx
-          ? ctx.getTokens()?.clio_user_id
-          : (await loadTokens())?.clio_user_id;
-        if (ctx) {
-          ctx.clearTokens();
-        } else {
-          await clearTokens();
-        }
+        const persisted = await loadTokens();
+        const clio_user_id = ctx?.getTokens()?.clio_user_id ?? persisted?.clio_user_id;
+        ctx?.clearTokens();
+        await clearTokens();
         await appendAuditLog({ tool: "logout", args: {}, outcome: "success", clio_user_id });
-        return {
-          content: [{ type: "text", text: "✅ Logged out. Tokens cleared." }],
-        };
+        return { content: [{ type: "text", text: "Logged out. Tokens cleared." }] };
       } catch (err: any) {
         await appendAuditLog({ tool: "logout", args: {}, outcome: "error", error_message: err.message });
-        return {
-          content: [{ type: "text", text: `❌ Logout failed: ${err.message}` }],
-          isError: true,
-        };
+        return { content: [{ type: "text", text: `Logout failed: ${err.message}` }], isError: true };
       }
     }
   );
