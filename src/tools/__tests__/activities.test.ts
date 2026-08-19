@@ -1,13 +1,15 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-const { mockClioPost, mockAppendAuditLog } = vi.hoisted(() => ({
+const { mockClioGet, mockClioPost, mockAppendAuditLog } = vi.hoisted(() => ({
+  mockClioGet: vi.fn(),
   mockClioPost: vi.fn(),
   mockAppendAuditLog: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../utils/clioClient.js", () => ({
-  clioGet: vi.fn(),
+  clioGet: mockClioGet,
   clioPost: mockClioPost,
+  extractNextPageToken: (meta: any) => meta?.next_page_token ?? null,
 }));
 
 vi.mock("../../utils/auditLog.js", () => ({
@@ -47,6 +49,78 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockAppendAuditLog.mockResolvedValue(undefined);
   mockClioPost.mockResolvedValue({ data: FAKE_ENTRY });
+  mockClioGet.mockResolvedValue({ data: [] });
+});
+
+// ─── read-only billing QC tools ──────────────────────────────────────────────
+
+describe("list_time_entries", () => {
+  it("defaults the Clio query to unbilled time entries", async () => {
+    const { handlers } = buildServer();
+    await handlers["list_time_entries"]({ status: "unbilled", limit: 25 });
+    expect(mockClioGet).toHaveBeenCalledWith(
+      "/activities.json",
+      expect.objectContaining({ type: "TimeEntry", status: "unbilled", limit: "25" }),
+    );
+  });
+
+  it("returns billed-state metadata and pagination without changing it", async () => {
+    mockClioGet.mockResolvedValueOnce({
+      data: [{
+        ...FAKE_ENTRY,
+        etag: "etag-1",
+        billed: false,
+        on_bill: false,
+        no_charge: false,
+        tax_setting: "tax_1_only",
+        activity_description: { id: 8, name: "Legal services" },
+      }],
+      meta: { next_page_token: "next-1" },
+    });
+    const { handlers } = buildServer();
+    const result = await handlers["list_time_entries"]({ status: "unbilled", limit: 1 }) as any;
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.entries[0]).toMatchObject({
+      id: 99,
+      billed: false,
+      on_bill: false,
+      tax_setting: "tax_1_only",
+      activity_description: { id: 8, name: "Legal services" },
+    });
+    expect(parsed).toMatchObject({ status: "unbilled", has_more: true, next_page_token: "next-1" });
+  });
+});
+
+describe("get_time_entry", () => {
+  it("retrieves one exact activity ID", async () => {
+    mockClioGet.mockResolvedValueOnce({ data: FAKE_ENTRY });
+    const { handlers } = buildServer();
+    await handlers["get_time_entry"]({ activity_id: 99 });
+    expect(mockClioGet).toHaveBeenCalledWith(
+      "/activities/99.json",
+      expect.objectContaining({ fields: expect.stringContaining("billed") }),
+    );
+  });
+});
+
+describe("list_activity_descriptions", () => {
+  it("returns activity descriptions and a continuation cursor", async () => {
+    mockClioGet.mockResolvedValueOnce({
+      data: [{ id: 8, name: "Legal services", default: false, rate: 300 }],
+      meta: { next_page_token: "next-2" },
+    });
+    const { handlers } = buildServer();
+    const result = await handlers["list_activity_descriptions"]({ limit: 1 }) as any;
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.activity_descriptions).toEqual([{ id: 8, name: "Legal services", default: false, rate: 300 }]);
+    expect(parsed.next_page_token).toBe("next-2");
+    expect(mockClioGet).toHaveBeenCalledWith(
+      "/activity_descriptions.json",
+      expect.objectContaining({
+        fields: "id,name,default,rate,created_at,updated_at",
+      }),
+    );
+  });
 });
 
 // ─── log_time_entry ───────────────────────────────────────────────────────────

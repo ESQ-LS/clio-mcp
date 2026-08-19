@@ -46,7 +46,7 @@
         },
         {
           "name": "CLIO_REGION",
-          "description": "Clio region: 'us' (default) or 'eu'. Controls API and auth base URLs.",
+          "description": "Clio region: 'us' (default), 'ca', 'eu', or 'au'. Controls API and auth base URLs.",
           "isRequired": false,
           "format": "string",
           "isSecret": false
