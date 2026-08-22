@@ -387,6 +387,16 @@ Claude selects and calls these tools automatically based on your questions. You 
 | `log_time_entry` | `matter_id`, `date`, `quantity_in_hours`, `note`, `price`, `non_billable`, `no_charge`, `activity_description_id`, `user_id` | Creates a new billable (or non-billable) time entry on a matter |
 | `create_activity` | `type`, `date`, `matter_id`, `note`, `quantity_in_hours`, `price`, `non_billable`, `no_charge`, `activity_description_id`, `user_id`, `reference`, `tax_setting` | Creates any Clio activity type — TimeEntry, ExpenseEntry, HardCostEntry, or SoftCostEntry |
 
+### ESQ controlled time-entry writes
+
+The ESQ production fork is read-only unless a write tool is explicitly named in
+`ESQ_WRITE_TOOLS`. It exposes `create_time_entry` and `update_time_entry` only
+when both names are allowlisted. Each tool is dry-run by default and requires a
+second, unchanged call with `confirm_write: true` and the short-lived,
+single-use `preview_token` returned by the dry run. Updates require the current
+Activity ID and ETag, use `If-Match`, and reject billed or invoiced entries.
+Deletion is not implemented. Broad legacy write handlers remain withheld.
+
 ### Billing (1 tool)
 
 | Tool | Inputs | What it does |

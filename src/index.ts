@@ -29,6 +29,7 @@ async function main() {
         const { registerTaskTools } = await import("./tools/tasks.js");
         const { registerCalendarTools } = await import("./tools/calendar.js");
         const { registerActivityTools } = await import("./tools/activities.js");
+        const { registerControlledTimeEntryTools } = await import("./tools/controlledTimeEntries.js");
         const { registerBillingTools } = await import("./tools/billing.js");
         const { registerCommunicationTools } = await import("./tools/communications.js");
         const { registerNoteTools } = await import("./tools/notes.js");
@@ -46,6 +47,7 @@ async function main() {
         registerTaskTools(server);
         registerCalendarTools(server);
         registerActivityTools(server);
+        registerControlledTimeEntryTools(server);
         registerBillingTools(server);
         registerCommunicationTools(server);
         registerNoteTools(server);

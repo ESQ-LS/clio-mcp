@@ -1,14 +1,16 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-const { mockReadFile } = vi.hoisted(() => ({
+const { mockReadFile, mockAppendFile, mockMkdir } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
+  mockAppendFile: vi.fn(),
+  mockMkdir: vi.fn(),
 }));
 
 vi.mock("fs/promises", () => ({
   default: {
     readFile: mockReadFile,
-    appendFile: vi.fn().mockResolvedValue(undefined),
-    mkdir: vi.fn().mockResolvedValue(undefined),
+    appendFile: mockAppendFile,
+    mkdir: mockMkdir,
   },
 }));
 
@@ -25,7 +27,7 @@ vi.mock("../tokenStorage.js", () => ({
   loadTokens: vi.fn().mockResolvedValue(null),
 }));
 
-import { readAuditLog } from "../auditLog.js";
+import { appendAuditLog, readAuditLog } from "../auditLog.js";
 
 function makeEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -44,6 +46,37 @@ function toJSONL(...entries: object[]): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockAppendFile.mockResolvedValue(undefined);
+  mockMkdir.mockResolvedValue(undefined);
+});
+
+describe("appendAuditLog", () => {
+  it("redacts billing narratives and supporting evidence", async () => {
+    const persisted = await appendAuditLog({
+      tool: "create_time_entry",
+      action: "create",
+      confirmation_state: "dry_run",
+      outcome: "success",
+      matter_id: 101,
+      args: {
+        narrative: "Confidential synthetic narrative",
+        supporting_evidence: "Confidential synthetic evidence",
+        confirm_write: false,
+      },
+    });
+    expect(persisted).toBe(true);
+    const written = mockAppendFile.mock.calls[0][1] as string;
+    expect(written).not.toContain("Confidential synthetic narrative");
+    expect(written).not.toContain("Confidential synthetic evidence");
+    expect(written).toContain('"narrative":"[REDACTED]"');
+    expect(written).toContain('"supporting_evidence":"[REDACTED]"');
+  });
+
+  it("reports persistence failure to confirmation-gated callers", async () => {
+    mockAppendFile.mockRejectedValueOnce(new Error("synthetic disk failure"));
+    const persisted = await appendAuditLog({ tool: "create_time_entry", args: {}, outcome: "error" });
+    expect(persisted).toBe(false);
+  });
 });
 
 describe("readAuditLog", () => {

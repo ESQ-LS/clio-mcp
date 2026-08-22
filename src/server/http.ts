@@ -13,6 +13,7 @@ import { registerDocumentTools } from "../tools/documents.js";
 import { registerTaskTools } from "../tools/tasks.js";
 import { registerCalendarTools } from "../tools/calendar.js";
 import { registerActivityTools } from "../tools/activities.js";
+import { registerControlledTimeEntryTools } from "../tools/controlledTimeEntries.js";
 import { registerBillingTools } from "../tools/billing.js";
 import { registerCommunicationTools } from "../tools/communications.js";
 import { registerNoteTools } from "../tools/notes.js";
@@ -50,6 +51,7 @@ function createMcpServer(): McpServer {
   registerTaskTools(server);
   registerCalendarTools(server);
   registerActivityTools(server);
+  registerControlledTimeEntryTools(server);
   registerBillingTools(server);
   registerCommunicationTools(server);
   registerNoteTools(server);
