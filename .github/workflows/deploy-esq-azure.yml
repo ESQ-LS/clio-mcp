@@ -118,6 +118,7 @@ jobs:
             --name "${CONTAINER_APP_NAME}" \
             --resource-group "${{ steps.target.outputs.resource_group }}" \
             --image "${{ steps.target.outputs.new_image }}" \
+            --set-env-vars "ESQ_WRITE_TOOLS=create_time_entry,update_time_entry" \
             --output none
 
       - name: Verify live revision

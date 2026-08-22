@@ -12,6 +12,7 @@ const AUDIT_FILE = path.join(AUDIT_DIR, "audit.log");
 
 const REDACTED_KEYS = new Set([
   "access_token", "refresh_token", "client_secret", "password", "token", "encryption_key",
+  "note", "narrative", "description", "supporting_evidence", "evidence",
 ]);
 
 function detectMachineIp(): string | undefined {
@@ -33,6 +34,9 @@ export interface AuditEntry {
   error_message?: string;
   clio_user_id?: string;
   matter_id?: number;
+  record_id?: number;
+  action?: string;
+  confirmation_state?: "dry_run" | "confirmed";
   result_count?: number;
 }
 
@@ -66,7 +70,7 @@ function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
 
 export async function appendAuditLog(
   entry: Omit<AuditEntry, "timestamp" | "session_id" | "machine_ip" | "clio_user_id"> & { clio_user_id?: string; result_count?: number }
-): Promise<void> {
+): Promise<boolean> {
   try {
     await fs.mkdir(AUDIT_DIR, { recursive: true });
 
@@ -92,12 +96,23 @@ export async function appendAuditLog(
       ...(entry.error_message && { error_message: entry.error_message }),
       ...(clio_user_id && { clio_user_id }),
       ...(entry.matter_id !== undefined && { matter_id: entry.matter_id }),
+      ...(entry.record_id !== undefined && { record_id: entry.record_id }),
+      ...(entry.action !== undefined && { action: entry.action }),
+      ...(entry.confirmation_state !== undefined && { confirmation_state: entry.confirmation_state }),
       ...(entry.result_count !== undefined && { result_count: entry.result_count }),
     };
 
     await fs.appendFile(AUDIT_FILE, JSON.stringify(full) + "\n", "utf8");
+    if (full.confirmation_state) {
+      // Container Apps captures stderr in the configured logging destination.
+      // This mirrors only the already-redacted mutation event so revision-local
+      // filesystem loss does not erase the administrative write trail.
+      console.error(`[mutation-audit] ${JSON.stringify(full)}`);
+    }
+    return true;
   } catch (err: any) {
     console.error(`[audit] WARNING: Failed to write audit log: ${err.message}`);
+    return false;
   }
 }
 
