@@ -10,6 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, extractNextPageToken } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const COMMUNICATION_FIELDS =
   "id,subject,body,type,date,senders{name},receivers{name},matter{id,display_number}";
@@ -35,6 +36,7 @@ export function registerCommunicationTools(server: McpServer): void {
           .default(false)
           .describe("Return complete message bodies instead of truncated previews"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ matter_id, query, limit, page_token, full_body }) => {
       const auditArgs = { matter_id, query, limit, page_token, full_body };

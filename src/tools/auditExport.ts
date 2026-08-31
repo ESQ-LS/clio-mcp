@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { LOCAL_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 import { appendAuditLog, readAuditLog } from "../utils/auditLog.js";
 
 export function registerAuditExportTool(server: McpServer): void {
@@ -20,6 +21,7 @@ export function registerAuditExportTool(server: McpServer): void {
         offset: z.number().int().min(0).default(0)
           .describe("Zero-based offset for pagination."),
       },
+      annotations: LOCAL_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ date_from, date_to, matter_id, limit, offset }) => {
       try {
