@@ -5,6 +5,7 @@ import path from "path";
 import crypto from "crypto";
 import { clioGet, clioPost, clioPut, clioPatch, getClioBaseUrl, ClioApiError, extractNextPageToken } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const DOCUMENT_LIST_FIELDS = "id,name,content_type,size,created_at,matter{id,display_number}";
 
@@ -76,6 +77,7 @@ export function registerDocumentTools(server: McpServer): void {
         limit: z.number().int().min(1).max(200).default(25).describe("Max results to return (1-200)"),
         page_token: z.string().optional().describe("Cursor from a previous list_documents response to fetch the next page"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ matter_id, parent_id, query, limit, page_token }) => {
       if (!matter_id && !parent_id && !query) {
@@ -143,6 +145,7 @@ export function registerDocumentTools(server: McpServer): void {
       inputSchema: {
         document_id: z.number().int().positive().describe("The Clio document ID"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ document_id }) => {
       try {

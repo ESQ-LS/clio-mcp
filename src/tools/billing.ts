@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, extractNextPageToken } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const BILL_FIELDS = "id,number,issued_at,due_at,balance,total,state";
 
@@ -17,6 +18,7 @@ export function registerBillingTools(server: McpServer): void {
       inputSchema: {
         matter_id: z.number().int().positive().describe("The Clio matter ID"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ matter_id }) => {
       try {
@@ -70,6 +72,7 @@ export function registerBillingTools(server: McpServer): void {
         limit: z.number().int().min(1).max(200).default(25).describe("Max results to return (1-200)"),
         page_token: z.string().optional().describe("Cursor from a previous list_bills response to fetch the next page"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ matter_id, state, limit, page_token }) => {
       const auditArgs = { matter_id, state, limit, page_token };

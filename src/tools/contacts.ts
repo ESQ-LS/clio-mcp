@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, ClioApiError, extractNextPageToken } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const CONTACT_LIST_FIELDS =
   "id,name,email_addresses{address,name},phone_numbers{number,name},company{id,name},type";
@@ -19,6 +20,7 @@ export function registerContactTools(server: McpServer): void {
         limit: z.number().int().min(1).max(200).default(25).describe("Max results to return (1–200)"),
         page_token: z.string().optional().describe("Cursor from a previous search_contacts response to fetch the next page"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ query, limit, page_token }) => {
       try {
@@ -64,6 +66,7 @@ export function registerContactTools(server: McpServer): void {
       inputSchema: {
         contact_id: z.number().int().positive().describe("The Clio contact ID"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ contact_id }) => {
       try {

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, ClioApiError } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const USER_LIST_FIELDS = "id,name,email,enabled,subscription_type,initials";
 const USER_DETAIL_FIELDS = "id,name,email,enabled,subscription_type,initials,created_at,updated_at";
@@ -24,6 +25,7 @@ export function registerUserTools(server: McpServer): void {
           .describe("Return only enabled (active) accounts (omit to return all)"),
         limit: z.number().int().min(1).max(2000).default(200).describe("Max results to return (1-2000)"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ name, subscription_type, enabled, limit }) => {
       try {
@@ -78,6 +80,7 @@ export function registerUserTools(server: McpServer): void {
       inputSchema: {
         user_id: z.number().int().positive().describe("The Clio user ID"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ user_id }) => {
       try {

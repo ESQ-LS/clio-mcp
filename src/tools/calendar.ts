@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, clioPost } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const CALENDAR_FIELDS = "id,summary,description,start_at,end_at,matter{id,display_number},attendees{id,name}";
 
@@ -21,6 +22,7 @@ export function registerCalendarTools(server: McpServer): void {
         from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("ISO date (YYYY-MM-DD) — range start, inclusive"),
         to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("ISO date (YYYY-MM-DD) — range end, inclusive"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ from, to }) => {
       try {
@@ -60,6 +62,7 @@ export function registerCalendarTools(server: McpServer): void {
     {
       description: "List calendars available in Clio — use the returned id as calendar_owner_id when creating entries",
       inputSchema: {},
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async () => {
       try {

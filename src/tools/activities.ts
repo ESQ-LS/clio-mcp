@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, clioPost, extractNextPageToken } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const ACTIVITY_FIELDS =
   "id,etag,type,date,quantity_in_hours,rounded_quantity_in_hours,price,total,note," +
@@ -28,7 +29,7 @@ export function registerActivityTools(server: McpServer): void {
         limit: z.number().int().min(1).max(200).default(25).describe("Max results to return (1-200)"),
         page_token: z.string().optional().describe("Cursor from a previous response"),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ matter_id, start_date, end_date, status, limit, page_token }) => {
       try {
@@ -109,7 +110,7 @@ export function registerActivityTools(server: McpServer): void {
       inputSchema: {
         activity_id: z.number().int().positive().describe("Clio Activity ID for the time entry"),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ activity_id }) => {
       try {
@@ -138,7 +139,7 @@ export function registerActivityTools(server: McpServer): void {
         limit: z.number().int().min(1).max(200).default(100),
         page_token: z.string().optional().describe("Cursor from a previous response"),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ limit, page_token }) => {
       try {

@@ -3,11 +3,15 @@ import { clearTokens, loadTokens } from "./tokenStorage.js";
 import { getValidAccessToken, buildAuthorizationUrl } from "./oauth.js";
 import { appendAuditLog } from "../utils/auditLog.js";
 import { getSessionContext } from "../utils/sessionContext.js";
+import { LOCAL_READ_ONLY_TOOL_ANNOTATIONS } from "../tools/annotations.js";
 
 export function registerAuthTools(server: McpServer): void {
   server.registerTool(
     "auth_status",
-    { description: "Check whether the connector is authenticated with Clio and when the token expires" },
+    {
+      description: "Check whether the connector is authenticated with Clio and when the token expires",
+      annotations: LOCAL_READ_ONLY_TOOL_ANNOTATIONS,
+    },
     async () => {
       const ctx = getSessionContext();
       const tokens = ctx?.getTokens() ?? await loadTokens();

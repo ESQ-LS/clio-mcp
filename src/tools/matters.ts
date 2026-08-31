@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, clioPost, ClioApiError } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const MATTER_LIST_FIELDS =
   "id,display_number,description,status,client{id,name},practice_area{id,name},open_date,close_date";
@@ -18,6 +19,7 @@ export function registerMatterTools(server: McpServer): void {
         status: z.enum(["open", "pending", "closed"]).optional().describe("Filter by matter status"),
         limit: z.number().int().min(1).max(200).default(25).describe("Max results to return (1-200)"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ status, limit }) => {
       try {
@@ -67,6 +69,7 @@ export function registerMatterTools(server: McpServer): void {
       inputSchema: {
         matter_id: z.number().int().describe("The Clio matter ID"),
       },
+      annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
     },
     async ({ matter_id }) => {
       try {
