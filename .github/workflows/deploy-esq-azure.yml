@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout esq/main
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: esq/main
 
@@ -48,7 +48,7 @@ jobs:
 
       - name: Azure login with OIDC
         if: steps.auth.outputs.mode == 'oidc'
-        uses: azure/login@v2
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -56,7 +56,7 @@ jobs:
 
       - name: Azure login with service-principal credentials
         if: steps.auth.outputs.mode == 'creds'
-        uses: azure/login@v2
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           creds: ${{ env.AZURE_CREDENTIALS }}
 
