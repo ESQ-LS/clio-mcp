@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, clioPost, ClioApiError } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
-import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
+import { CLIO_CREATE_TOOL_ANNOTATIONS, CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const MATTER_LIST_FIELDS =
   "id,display_number,description,status,client{id,name},practice_area{id,name},open_date,close_date";
@@ -122,6 +122,7 @@ export function registerMatterTools(server: McpServer): void {
         originating_attorney_id: z.number().int().positive().optional().describe("Clio user ID of the originating attorney"),
         client_reference: z.string().optional().describe("External reference string for cross-linking with other systems"),
       },
+      annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
     async ({ client_id, description, practice_area_id, status, open_date,
              billable, responsible_attorney_id, originating_attorney_id, client_reference }) => {

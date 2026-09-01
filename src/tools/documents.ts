@@ -5,7 +5,7 @@ import path from "path";
 import crypto from "crypto";
 import { clioGet, clioPost, clioPut, clioPatch, getClioBaseUrl, ClioApiError, extractNextPageToken } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
-import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
+import { CLIO_CREATE_TOOL_ANNOTATIONS, CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const DOCUMENT_LIST_FIELDS = "id,name,content_type,size,created_at,matter{id,display_number}";
 
@@ -192,6 +192,7 @@ export function registerDocumentTools(server: McpServer): void {
         name: z.string().optional().describe("Document name in Clio; defaults to the file's basename"),
         content_type: z.string().optional().describe("MIME type; auto-detected from extension if omitted"),
       },
+      annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
     async ({ file_path, matter_id, name, content_type }) => {
       try {

@@ -1,13 +1,8 @@
-/**
- * MCP annotations for tools that retrieve data from Clio without changing it.
- *
- * Clio is an external system, so openWorldHint remains true even though these
- * tools are non-destructive reads.
- */
+/** MCP annotations for bounded lookups that do not change Clio or auth state. */
 export const CLIO_READ_ONLY_TOOL_ANNOTATIONS = {
   readOnlyHint: true,
   destructiveHint: false,
-  openWorldHint: true,
+  openWorldHint: false,
 } as const;
 
 /** MCP annotations for read-only tools that inspect only local connector data. */
@@ -15,4 +10,36 @@ export const LOCAL_READ_ONLY_TOOL_ANNOTATIONS = {
   readOnlyHint: true,
   destructiveHint: false,
   openWorldHint: false,
+} as const;
+
+/** Starts an external OAuth flow and may add or replace local auth state. */
+export const AUTHENTICATE_TOOL_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+} as const;
+
+/** Clears local authentication state. */
+export const LOGOUT_TOOL_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false,
+} as const;
+
+/** A production-capable create is additive but interacts with Clio. */
+export const CLIO_CREATE_TOOL_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+} as const;
+
+/** A production-capable update can replace existing Clio record fields. */
+export const CLIO_UPDATE_TOOL_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
 } as const;

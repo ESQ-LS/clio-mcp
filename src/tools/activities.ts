@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, clioPost, extractNextPageToken } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
-import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
+import { CLIO_CREATE_TOOL_ANNOTATIONS, CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const ACTIVITY_FIELDS =
   "id,etag,type,date,quantity_in_hours,rounded_quantity_in_hours,price,total,note," +
@@ -194,6 +194,7 @@ export function registerActivityTools(server: McpServer): void {
         activity_description_id: z.number().int().positive().optional().describe("Clio activity description / billing code ID"),
         user_id: z.number().int().positive().optional().describe("User to log time for; defaults to authenticated user"),
       },
+      annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
     async ({ matter_id, date, quantity_in_hours, note, price, non_billable, no_charge, activity_description_id, user_id }) => {
       try {
@@ -270,6 +271,7 @@ export function registerActivityTools(server: McpServer): void {
         reference: z.string().optional().describe("Check reference (HardCostEntry only)"),
         tax_setting: z.enum(["no_tax", "tax_1_only", "tax_2_only", "tax_1_and_tax_2"]).optional().describe("Tax setting (expense entries)"),
       },
+      annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
     async ({ type, date, matter_id, note, quantity_in_hours, price, non_billable, no_charge, activity_description_id, user_id, reference, tax_setting }) => {
       if (type === "TimeEntry" && quantity_in_hours === undefined) {

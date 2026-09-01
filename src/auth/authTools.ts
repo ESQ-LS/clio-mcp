@@ -3,7 +3,11 @@ import { clearTokens, loadTokens } from "./tokenStorage.js";
 import { getValidAccessToken, buildAuthorizationUrl } from "./oauth.js";
 import { appendAuditLog } from "../utils/auditLog.js";
 import { getSessionContext } from "../utils/sessionContext.js";
-import { LOCAL_READ_ONLY_TOOL_ANNOTATIONS } from "../tools/annotations.js";
+import {
+  AUTHENTICATE_TOOL_ANNOTATIONS,
+  LOCAL_READ_ONLY_TOOL_ANNOTATIONS,
+  LOGOUT_TOOL_ANNOTATIONS,
+} from "../tools/annotations.js";
 
 export function registerAuthTools(server: McpServer): void {
   server.registerTool(
@@ -49,7 +53,10 @@ export function registerAuthTools(server: McpServer): void {
 
   server.registerTool(
     "authenticate",
-    { description: "Trigger the Clio OAuth login flow" },
+    {
+      description: "Trigger the Clio OAuth login flow",
+      annotations: AUTHENTICATE_TOOL_ANNOTATIONS,
+    },
     async () => {
       const ctx = getSessionContext();
       if (ctx) {
@@ -81,7 +88,10 @@ export function registerAuthTools(server: McpServer): void {
 
   server.registerTool(
     "logout",
-    { description: "Log out of Clio (clears local tokens)" },
+    {
+      description: "Log out of Clio (clears local tokens)",
+      annotations: LOGOUT_TOOL_ANNOTATIONS,
+    },
     async () => {
       const ctx = getSessionContext();
       try {
