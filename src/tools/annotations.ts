@@ -1,4 +1,8 @@
-/** MCP annotations for bounded lookups that do not change Clio or auth state. */
+/**
+ * MCP annotations for bounded lookups that do not change Clio or auth state.
+ * Under ChatGPT's annotation semantics, these reads stay inside the current
+ * user's authenticated Clio account, so they do not reach an open world.
+ */
 export const CLIO_READ_ONLY_TOOL_ANNOTATIONS = {
   readOnlyHint: true,
   destructiveHint: false,
