@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, clioPost } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
-import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
+import { CLIO_CREATE_TOOL_ANNOTATIONS, CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const CALENDAR_FIELDS = "id,summary,description,start_at,end_at,matter{id,display_number},attendees{id,name}";
 
@@ -106,6 +106,7 @@ export function registerCalendarTools(server: McpServer): void {
         send_email_notification: z.boolean().optional().describe("Send email notifications to attendees"),
         attendee_ids: z.array(z.number().int().positive()).optional().describe("List of Clio user IDs to invite as attendees"),
       },
+      annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
     async ({ summary, start_at, end_at, calendar_owner_id, description, all_day, matter_id, location, send_email_notification, attendee_ids }) => {
       try {

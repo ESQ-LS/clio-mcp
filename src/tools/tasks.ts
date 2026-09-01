@@ -2,7 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioGet, clioPost, clioPatch } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
-import { CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
+import {
+  CLIO_CREATE_TOOL_ANNOTATIONS,
+  CLIO_READ_ONLY_TOOL_ANNOTATIONS,
+  CLIO_UPDATE_TOOL_ANNOTATIONS,
+} from "./annotations.js";
 
 const TASK_FIELDS = "id,name,priority,due_at,status,assignee{id,name},matter{id,display_number},reminders{id,notification_method}";
 
@@ -84,6 +88,7 @@ export function registerTaskTools(server: McpServer): void {
         due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("ISO date (YYYY-MM-DD) when the task is due"),
         assignee_id: z.number().int().positive().optional().describe("Clio user ID to assign the task to"),
       },
+      annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
     async ({ matter_id, name, description, priority, due_date, assignee_id }) => {
       try {
@@ -147,6 +152,7 @@ export function registerTaskTools(server: McpServer): void {
         status: z.enum(["Pending", "Complete", "In Progress", "In Review", "Draft"]).optional().describe("New task status"),
         assignee_id: z.number().int().positive().optional().describe("Clio user ID to reassign the task to"),
       },
+      annotations: CLIO_UPDATE_TOOL_ANNOTATIONS,
     },
     async ({ task_id, name, description, priority, due_date, status, assignee_id }) => {
       if ([name, description, priority, due_date, status, assignee_id].every((v) => v === undefined)) {
@@ -206,6 +212,7 @@ export function registerTaskTools(server: McpServer): void {
       inputSchema: {
         task_id: z.number().int().positive().describe("ID of the task to mark complete"),
       },
+      annotations: CLIO_UPDATE_TOOL_ANNOTATIONS,
     },
     async ({ task_id }) => {
       try {

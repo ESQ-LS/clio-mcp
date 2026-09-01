@@ -3,6 +3,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { appendAuditLog } from "../utils/auditLog.js";
 import { ClioApiError, clioGet, clioPatch, clioPost } from "../utils/clioClient.js";
+import {
+  CLIO_CREATE_TOOL_ANNOTATIONS,
+  CLIO_UPDATE_TOOL_ANNOTATIONS,
+} from "./annotations.js";
 
 const PREVIEW_TTL_MS = 15 * 60 * 1000;
 
@@ -208,7 +212,7 @@ export function registerControlledTimeEntryTools(server: McpServer): void {
         confirm_write: z.boolean().default(false).describe("Must be true for a production write; false returns a dry-run preview"),
         preview_token: z.string().optional().describe("Unexpired token returned by the unchanged dry-run preview"),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
     async ({ matter_id, date, user_id, quantity_in_hours, rate, billing_status, narrative, activity_description_id, supporting_evidence, confirm_write, preview_token }) => {
       const confirmationState = confirm_write ? "confirmed" : "dry_run";
@@ -318,7 +322,7 @@ export function registerControlledTimeEntryTools(server: McpServer): void {
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },
-      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      annotations: CLIO_UPDATE_TOOL_ANNOTATIONS,
     },
     async ({ activity_id, etag, date, user_id, quantity_in_hours, rate, narrative, activity_description_id, supporting_evidence, confirm_write, preview_token }) => {
       const confirmationState = confirm_write ? "confirmed" : "dry_run";

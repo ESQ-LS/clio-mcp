@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import { clioPost } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import { CLIO_CREATE_TOOL_ANNOTATIONS } from "./annotations.js";
 
 export function registerNoteTools(server: McpServer): void {
   server.registerTool(
@@ -13,6 +14,7 @@ export function registerNoteTools(server: McpServer): void {
         subject: z.string().min(1).describe("Note subject / title"),
         body: z.string().min(1).describe("Note body text"),
       },
+      annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
     async ({ matter_id, subject, body }) => {
       try {
