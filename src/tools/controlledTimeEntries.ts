@@ -4,8 +4,8 @@ import z from "zod";
 import { appendAuditLog } from "../utils/auditLog.js";
 import { ClioApiError, clioGet, clioPatch, clioPost } from "../utils/clioClient.js";
 import {
+  CLIO_CONTROLLED_UPDATE_TOOL_ANNOTATIONS,
   CLIO_CREATE_TOOL_ANNOTATIONS,
-  CLIO_UPDATE_TOOL_ANNOTATIONS,
 } from "./annotations.js";
 
 const PREVIEW_TTL_MS = 15 * 60 * 1000;
@@ -322,7 +322,7 @@ export function registerControlledTimeEntryTools(server: McpServer): void {
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },
-      annotations: CLIO_UPDATE_TOOL_ANNOTATIONS,
+      annotations: CLIO_CONTROLLED_UPDATE_TOOL_ANNOTATIONS,
     },
     async ({ activity_id, etag, date, user_id, quantity_in_hours, rate, narrative, activity_description_id, supporting_evidence, confirm_write, preview_token }) => {
       const confirmationState = confirm_write ? "confirmed" : "dry_run";

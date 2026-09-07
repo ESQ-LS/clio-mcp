@@ -47,3 +47,11 @@ export const CLIO_UPDATE_TOOL_ANNOTATIONS = {
   idempotentHint: false,
   openWorldHint: true,
 } as const;
+
+/** A controlled time-entry update modifies fields without deleting the record. */
+export const CLIO_CONTROLLED_UPDATE_TOOL_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+} as const;

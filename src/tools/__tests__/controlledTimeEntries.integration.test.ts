@@ -33,7 +33,7 @@ describe("controlled time-entry MCP schema integration", () => {
       ]));
       expect(byName.update_time_entry.annotations).toMatchObject({
         readOnlyHint: false,
-        destructiveHint: true,
+        destructiveHint: false,
       });
       expect(byName).not.toHaveProperty("delete_time_entry");
     } finally {
