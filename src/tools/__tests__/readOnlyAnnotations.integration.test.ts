@@ -57,6 +57,9 @@ const ADDITIVE_WRITE_TOOLS = [
 const DESTRUCTIVE_UPDATE_TOOLS = [
   "complete_task",
   "update_task",
+] as const;
+
+const NONDESTRUCTIVE_UPDATE_TOOLS = [
   "update_time_entry",
 ] as const;
 
@@ -156,7 +159,7 @@ describe("read-only MCP annotations", () => {
       });
       expect(byName.update_time_entry.annotations).toEqual({
         readOnlyHint: false,
-        destructiveHint: true,
+        destructiveHint: false,
         idempotentHint: false,
         openWorldHint: true,
       });
@@ -181,6 +184,7 @@ describe("read-only MCP annotations", () => {
         "authenticate",
         "logout",
         ...ADDITIVE_WRITE_TOOLS,
+        ...NONDESTRUCTIVE_UPDATE_TOOLS,
         ...DESTRUCTIVE_UPDATE_TOOLS,
       ].sort();
       expect(Object.keys(byName).sort()).toEqual(expectedNames);
@@ -197,6 +201,14 @@ describe("read-only MCP annotations", () => {
         expect(byName[name].annotations, name).toEqual({
           readOnlyHint: false,
           destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true,
+        });
+      }
+      for (const name of NONDESTRUCTIVE_UPDATE_TOOLS) {
+        expect(byName[name].annotations, name).toEqual({
+          readOnlyHint: false,
+          destructiveHint: false,
           idempotentHint: false,
           openWorldHint: true,
         });
