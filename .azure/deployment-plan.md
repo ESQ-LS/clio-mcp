@@ -1,6 +1,8 @@
 # ESQ Clio MCP controlled time-entry writes
 
-**Status:** Deployed - Clio reauthorization required
+**Status:** Validated
+
+**Current change:** read-only contact custom-field retrieval
 
 ## 1. Objective
 
@@ -70,6 +72,20 @@ The user's instruction to use the existing source repository and existing Azure 
 
 ## 7. Validation Proof
 
+### 2026-09-13 contact custom-field change
+
+- `npm test`: 16 files and 126 synthetic tests passed.
+- `npm run build`: TypeScript production build passed.
+- Focused `contacts.test.ts`: five tests passed.
+- `git diff --check`: passed.
+- Deployment workflow YAML parse: passed.
+- Azure account: existing approved subscription enabled.
+- Target discovery: exactly one `ca-esq-clio-mcp` app with one container.
+- Pre-deploy revision/image recorded in Section 10.
+- RBAC/infrastructure validation: unchanged and not applicable to this image-only
+  update; the previously verified runtime `AcrPull` assignment remains the
+  required deployment/runtime boundary.
+
 - Validation completed: `2026-08-20T21:08:58Z`
 - `npm ci`: passed; 185 packages audited, zero vulnerabilities.
 - `npm test`: passed; 13 test files and 118 synthetic tests.
@@ -112,3 +128,51 @@ The user's instruction to use the existing source repository and existing Azure 
 ## 9. Rollback
 
 Restore the prior immutable image `esqdocxmcpacr.azurecr.io/esq-clio-mcp:esq-4945fc420cbd` and remove `create_time_entry,update_time_entry` from `ESQ_WRITE_TOOLS`. Do not delete Azure resources.
+
+## 10. Contact custom-field retrieval addendum
+
+- Mode: modify the existing image only; no infrastructure or configuration changes.
+- Source commit: `20ab4bdd13abbe86536236762bb5f1129363298c`.
+- Scope: expand exact-ID `get_contact` reads to request
+  `custom_field_values{id,field_name,field_type,value,custom_field{id}}`.
+- Output: definition ID, field name, value type, and value.
+- Safety: no new write operation, scope, secret, cache, log field, or audit value.
+- Validation completed locally: 5 focused tests, 126 full-suite tests, TypeScript
+  production build, and whitespace check passed.
+- Deployment recipe: merge to `esq/main`, then manually dispatch the existing
+  `Deploy ESQ Clio MCP to Azure` workflow, which discovers the existing app and
+  registry, builds an immutable SHA-tagged image, changes only the app image and
+  preserved `ESQ_WRITE_TOOLS` allowlist, and verifies health.
+- Cutover verification: record prior image/revision, verify health and the
+  23-tool manifest, confirm read-only annotations, authenticate if revision-local
+  tokens require it, and perform only the two approved exact-contact reads.
+- Rollback: restore the recorded pre-deploy image on `ca-esq-clio-mcp`; preserve
+  `ESQ_WRITE_TOOLS=create_time_entry,update_time_entry`.
+- User approval: supplied by “proceed” on 2026-09-13 after reviewing the exact
+  deployment and rollback sequence.
+
+### Validation steps for this image-only AZCLI rollout
+
+- [x] All validation checks pass
+  - [x] Dependency installation state is present and unchanged.
+  - [x] Five focused synthetic custom-field tests pass.
+  - [x] Full Vitest suite passes: 126 tests.
+  - [x] TypeScript production build passes.
+  - [x] Diff and secret/confidentiality review pass.
+  - [x] GitHub Actions deployment workflow syntax and exact `esq/main` checkout verified.
+  - [x] Azure authentication and the single existing Container App target verified read-only.
+  - [x] Current production image and revision recorded for rollback.
+
+### Current validation proof — 2026-09-13
+
+- Azure subscription: existing approved subscription remains enabled.
+- Target discovery: exactly one `ca-esq-clio-mcp` with one application container
+  in `rg-esq-pathb-mcp`.
+- Pre-deploy revision: `ca-esq-clio-mcp--0000008`.
+- Pre-deploy image:
+  `esqdocxmcpacr.azurecr.io/esq-clio-mcp:cf5e9b4e212af99b9f5c4339adea80dfcb122842`.
+- Workflow YAML parse: passed; workflow checks out `esq/main` and changes only
+  the existing image plus the preserved controlled-write allowlist.
+- Full test suite: 126 passed; production TypeScript build passed.
+- Infrastructure validation/what-if: not applicable; no infrastructure,
+  configuration, identity, RBAC, OAuth scope, or resource changes are planned.
