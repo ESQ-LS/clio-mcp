@@ -47,7 +47,9 @@ describe("get_contact custom fields", () => {
       definition_id: 7001, name: "Synthetic Registry Number",
       value_type: "text_line", value: "SYN-123",
     }]);
-    expect(mockClioGet.mock.calls[0][1].fields).toContain("custom_field_values{");
+    expect(mockClioGet.mock.calls[0][1].fields).toContain(
+      "custom_field_values{id,field_name,field_type,value,custom_field}"
+    );
     expect(mockAppendAuditLog).toHaveBeenCalledWith({
       tool: "get_contact", args: { contact_id: 42 }, outcome: "success",
     });

@@ -8,7 +8,7 @@ const CONTACT_LIST_FIELDS =
   "id,name,email_addresses{address,name},phone_numbers{number,name},company{id,name},type";
 
 const CONTACT_DETAIL_FIELDS =
-  "id,name,first_name,last_name,title,email_addresses{address,name},phone_numbers{number,name},company{id,name},type,created_at,updated_at,addresses{name,street,city,province,postal_code,country},custom_field_values{id,field_name,field_type,value,custom_field{id}}";
+  "id,name,first_name,last_name,title,email_addresses{address,name},phone_numbers{number,name},company{id,name},type,created_at,updated_at,addresses{name,street,city,province,postal_code,country},custom_field_values{id,field_name,field_type,value,custom_field}";
 
 type ContactCustomField = {
   definition_id: number;
