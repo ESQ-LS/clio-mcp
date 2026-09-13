@@ -8,7 +8,38 @@ const CONTACT_LIST_FIELDS =
   "id,name,email_addresses{address,name},phone_numbers{number,name},company{id,name},type";
 
 const CONTACT_DETAIL_FIELDS =
-  "id,name,first_name,last_name,title,email_addresses{address,name},phone_numbers{number,name},company{id,name},type,created_at,updated_at,addresses{name,street,city,province,postal_code,country}";
+  "id,name,first_name,last_name,title,email_addresses{address,name},phone_numbers{number,name},company{id,name},type,created_at,updated_at,addresses{name,street,city,province,postal_code,country},custom_field_values{id,field_name,field_type,value,custom_field{id}}";
+
+type ContactCustomField = {
+  definition_id: number;
+  name: string;
+  value_type: string;
+  value: unknown;
+};
+
+export function parseContactCustomFields(value: unknown): ContactCustomField[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("Malformed Clio contact custom_field_values response");
+
+  const seen = new Set<number>();
+  return value.map((entry: any) => {
+    const definitionId = entry?.custom_field?.id;
+    if (!Number.isInteger(definitionId) || typeof entry?.field_name !== "string" ||
+        typeof entry?.field_type !== "string" || !("value" in entry)) {
+      throw new Error("Malformed Clio contact custom field value");
+    }
+    if (seen.has(definitionId)) {
+      throw new Error("Duplicate Clio contact custom field definition");
+    }
+    seen.add(definitionId);
+    return {
+      definition_id: definitionId,
+      name: entry.field_name,
+      value_type: entry.field_type,
+      value: entry.value,
+    };
+  });
+}
 
 export function registerContactTools(server: McpServer): void {
   server.registerTool(
@@ -93,6 +124,7 @@ export function registerContactTools(server: McpServer): void {
           })),
           created_at: c.created_at,
           updated_at: c.updated_at,
+          custom_field_values: parseContactCustomFields(c.custom_field_values),
         };
 
         await appendAuditLog({ tool: "get_contact", args: { contact_id }, outcome: "success" });
