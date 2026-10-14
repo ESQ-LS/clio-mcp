@@ -357,6 +357,15 @@ Claude selects and calls these tools automatically based on your questions. You 
 | `create_contact` | person/company details, `confirm_write`, `preview_token` | Dry-runs a new contact, displays possible duplicates, and requires the preview token to write |
 | `update_contact` | `contact_id`, editable contact fields, `confirm_write`, `preview_token` | Dry-runs exact changes and invalidates the preview if the contact changes before confirmation |
 
+The intake project is tracked in [CLIENT-INTAKE-PROJECT.md](docs/CLIENT-INTAKE-PROJECT.md).
+Contact and matter updates use the current Clio ETag in `If-Match` so concurrent
+edits cannot silently overwrite changes. Contact email, phone, and address changes
+reuse existing entry IDs. When there are multiple candidates, supply `email_id`,
+`phone_id`, or `address_id` from `get_contact`; omitted address fields are preserved.
+If no entry exists, a Work entry is added. Tokens are bound to the authenticated
+Clio user, API region, and server process; preview again after a restart or replica
+change. All four tools remain gated by `ESQ_WRITE_TOOLS`.
+
 ### Documents (3 tools)
 
 | Tool | Inputs | What it does |

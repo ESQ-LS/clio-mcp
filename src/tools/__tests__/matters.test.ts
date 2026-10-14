@@ -21,8 +21,12 @@ vi.mock("../../utils/clioClient.js", () => ({
   clioPatch: mockClioPatch,
   clioGet: mockClioGet,
   ClioApiError: MockClioApiError,
+  getClioBaseUrl: () => "https://ca.app.clio.com/api/v4",
 }));
 vi.mock("../../utils/auditLog.js", () => ({ appendAuditLog: mockAppendAuditLog }));
+vi.mock("../../auth/tokenStorage.js", () => ({
+  loadTokens: vi.fn(async () => ({ clio_user_id: "100", expires_at: Date.now() + 60000 })),
+}));
 
 import { registerMatterTools } from "../matters.js";
 
@@ -36,6 +40,7 @@ beforeAll(() => {
 const CLIENT = { data: { id: 1, name: "Synthetic Client", type: "Company" } };
 const MATTER = {
   id: 42,
+  etag: "matter-v1",
   display_number: "00042-001",
   description: "Synthetic intake",
   status: "pending",
@@ -116,7 +121,7 @@ describe("controlled matter writes", () => {
       preview_token: preview.preview_token,
     });
     expect(JSON.parse(confirmed.content[0].text).write_performed).toBe(true);
-    expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: { status: "open" } });
+    expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: { status: "open" } }, { "If-Match": "matter-v1" });
   });
 
   it("fails closed when audit persistence fails", async () => {
@@ -124,5 +129,33 @@ describe("controlled matter writes", () => {
     const result = await handlers.create_matter(CREATE_ARGS);
     expect(result.isError).toBe(true);
     expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects a changed matter ETag before writing", async () => {
+    mockClioGet.mockResolvedValue({ data: MATTER });
+    const args = { matter_id: 42, status: "open" };
+    const preview = JSON.parse((await handlers.update_matter(args)).content[0].text);
+    mockClioGet.mockResolvedValue({ data: { ...MATTER, etag: "matter-v2" } });
+    const result = await handlers.update_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).toBe(true);
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
+  it("uses If-Match to reject an edit racing with the final PATCH", async () => {
+    mockClioGet.mockResolvedValue({ data: MATTER });
+    const args = { matter_id: 42, status: "open" };
+    const preview = JSON.parse((await handlers.update_matter(args)).content[0].text);
+    mockClioPatch.mockRejectedValue(new MockClioApiError(412, "Precondition failed"));
+    const result = await handlers.update_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).toBe(true);
+    expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: { status: "open" } }, { "If-Match": "matter-v1" });
+    expect(JSON.parse(result.content[0].text).error).toContain("412");
+  });
+
+  it("refuses updates when Clio omits an ETag", async () => {
+    mockClioGet.mockResolvedValue({ data: { ...MATTER, etag: undefined } });
+    const result = await handlers.update_matter({ matter_id: 42, status: "open" });
+    expect(result.isError).toBe(true);
+    expect(mockClioPatch).not.toHaveBeenCalled();
   });
 });

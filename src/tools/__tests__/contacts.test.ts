@@ -13,6 +13,9 @@ vi.mock("../../utils/clioClient.js", async (importOriginal) => {
   return { ...actual, clioGet: mockClioGet, clioPost: mockClioPost, clioPatch: mockClioPatch };
 });
 vi.mock("../../utils/auditLog.js", () => ({ appendAuditLog: mockAppendAuditLog }));
+vi.mock("../../auth/tokenStorage.js", () => ({
+  loadTokens: vi.fn(async () => ({ clio_user_id: "100", expires_at: Date.now() + 60000 })),
+}));
 
 import { ClioApiError } from "../../utils/clioClient.js";
 import { registerContactTools } from "../contacts.js";
@@ -110,7 +113,7 @@ describe("controlled contact writes", () => {
 
   it("previews and confirms an update against the current contact version", async () => {
     const current = {
-      data: { id: 42, name: "Synthetic Co", type: "Company", updated_at: "2026-10-14T12:00:00Z" },
+      data: { id: 42, etag: "contact-v1", name: "Synthetic Co", type: "Company", updated_at: "2026-10-14T12:00:00Z" },
     };
     mockClioGet.mockResolvedValue(current);
     mockClioPatch.mockResolvedValue({ data: { ...current.data, phone_numbers: [{ number: "4165550100" }] } });
@@ -127,6 +130,69 @@ describe("controlled contact writes", () => {
     expect(JSON.parse(confirmed.content[0].text).write_performed).toBe(true);
     expect(mockClioPatch).toHaveBeenCalledWith("/contacts/42.json", {
       data: { phone_numbers: [{ name: "Work", number: "4165550100" }] },
-    });
+    }, { "If-Match": "contact-v1" });
+  });
+
+  it("modifies existing entries by ID and preserves unspecified address fields", async () => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",
+      email_addresses: [{ id: 11, name: "Home", default_email: true, address: "old@example.com" }],
+      phone_numbers: [{ id: 12, name: "Home", number: "4165550000" }],
+      addresses: [{ id: 13, name: "Home", street: "1 Test Street", city: "Toronto", country: "Canada" }],
+    } });
+    mockClioPatch.mockResolvedValue({ data: { id: 42 } });
+    const handlers = getHandlers();
+    const args = { contact_id: 42, email: "new@example.com", phone: "4165550100", city: "Ottawa" };
+    const preview = JSON.parse((await handlers.update_contact(args)).content[0].text);
+    await handlers.update_contact({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPatch).toHaveBeenCalledWith("/contacts/42.json", { data: {
+      email_addresses: [{ id: 11, name: "Home", default_email: true, address: "new@example.com" }],
+      phone_numbers: [{ id: 12, name: "Home", number: "4165550100" }],
+      addresses: [{ id: 13, name: "Home", street: "1 Test Street", city: "Ottawa", country: "Canada" }],
+    } }, { "If-Match": "contact-v1" });
+  });
+
+  it("rejects ambiguous entries unless an exact entry ID is supplied", async () => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 42, etag: "v1", phone_numbers: [
+        { id: 11, name: "Work", number: "4165550000" },
+        { id: 12, name: "Work", number: "4165550001" },
+      ],
+    } });
+    const handlers = getHandlers();
+    const result = await handlers.update_contact({ contact_id: 42, phone: "4165550100" });
+    expect(result.isError).toBe(true);
+    const selected = await handlers.update_contact({ contact_id: 42, phone: "4165550100", phone_id: 12 });
+    expect(JSON.parse(selected.content[0].text).proposal.changes.phone_numbers[0].id).toBe(12);
+    const wrong = await handlers.update_contact({ contact_id: 42, phone: "4165550100", phone_id: 999 });
+    expect(wrong.isError).toBe(true);
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a changed contact ETag before writing", async () => {
+    const current = { id: 42, etag: "v1", name: "Synthetic" };
+    mockClioGet.mockResolvedValue({ data: current });
+    const handlers = getHandlers();
+    const args = { contact_id: 42, title: "Director" };
+    const preview = JSON.parse((await handlers.update_contact(args)).content[0].text);
+    mockClioGet.mockResolvedValue({ data: { ...current, etag: "v2" } });
+    const result = await handlers.update_contact({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).toBe(true);
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing ETags and missing nested IDs", async () => {
+    const handlers = getHandlers();
+    mockClioGet.mockResolvedValue({ data: { id: 42 } });
+    expect((await handlers.update_contact({ contact_id: 42, title: "Director" })).isError).toBe(true);
+    mockClioGet.mockResolvedValue({ data: { id: 42, etag: "v1", phone_numbers: [{ name: "Work" }] } });
+    expect((await handlers.update_contact({ contact_id: 42, phone: "4165550100" })).isError).toBe(true);
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
+  it("scrubs API errors that echo intake data from mutation audits", async () => {
+    mockClioGet.mockRejectedValue(new ClioApiError(422, "Invalid email: private@example.com"));
+    await getHandlers().create_contact({ type: "Company", name: "Synthetic" });
+    expect(JSON.stringify(mockAppendAuditLog.mock.calls)).not.toContain("private@example.com");
   });
 });

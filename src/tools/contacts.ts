@@ -5,6 +5,7 @@ import { appendAuditLog } from "../utils/auditLog.js";
 import {
   consumeWritePreviewToken,
   makeWritePreviewToken,
+  safeWriteError,
   writeJsonResult,
   writePreviewEnvelope,
 } from "../esq/writePreview.js";
@@ -18,7 +19,7 @@ const CONTACT_LIST_FIELDS =
   "id,name,email_addresses{address,name},phone_numbers{number,name},company{id,name},type";
 
 const CONTACT_DETAIL_FIELDS =
-  "id,name,first_name,last_name,title,email_addresses{address,name},phone_numbers{number,name},company{id,name},type,created_at,updated_at,addresses{name,street,city,province,postal_code,country},custom_field_values{id,field_name,field_type,value,custom_field}";
+  "id,etag,name,first_name,last_name,title,email_addresses{id,address,name,default_email},phone_numbers{id,number,name},company{id,name},type,created_at,updated_at,addresses{id,name,street,city,province,postal_code,country},custom_field_values{id,field_name,field_type,value,custom_field}";
 
 type ContactCustomField = {
   definition_id: number;
@@ -68,10 +69,64 @@ function buildContactData(input: Record<string, unknown>): Record<string, unknow
   return data;
 }
 
+function existingEntry(entries: any[], kind: string, preferDefault = false, entryId?: number): any | undefined {
+  if (!Array.isArray(entries)) throw new Error(`Malformed contact ${kind} response.`);
+  if (entryId !== undefined) {
+    const match = entries.find((entry) => entry.id === entryId);
+    if (!match) throw new Error(`The selected ${kind} entry does not belong to this contact.`);
+    return match;
+  }
+  const defaults = preferDefault ? entries.filter((entry) => entry.default_email === true) : [];
+  const workEntries = entries.filter((entry) => entry.name === "Work");
+  const candidates = defaults.length ? defaults : workEntries.length ? workEntries : entries;
+  if (candidates.length > 1) {
+    throw new Error(`Multiple ${kind} entries match; resolve the ambiguous contact entries in Clio before updating.`);
+  }
+  const entry = candidates[0];
+  if (entry && (!Number.isInteger(entry.id) || entry.id <= 0)) {
+    throw new Error(`The existing ${kind} entry has no valid ID; no update can be performed safely.`);
+  }
+  return entry;
+}
+
+function buildContactUpdateData(input: Record<string, unknown>, current: any): Record<string, unknown> {
+  const data = buildContactData(input);
+  if (input.email !== undefined) {
+    const entry = existingEntry(current.email_addresses ?? [], "email", true, input.email_id as number | undefined);
+    data.email_addresses = [{
+      ...(entry && { id: entry.id }),
+      name: entry?.name ?? "Work",
+      address: input.email,
+      default_email: entry?.default_email ?? true,
+    }];
+  }
+  if (input.phone !== undefined) {
+    const entry = existingEntry(current.phone_numbers ?? [], "phone", false, input.phone_id as number | undefined);
+    data.phone_numbers = [{ ...(entry && { id: entry.id }), name: entry?.name ?? "Work", number: input.phone }];
+  }
+  if (data.addresses) {
+    const entry = existingEntry(current.addresses ?? [], "address", false, input.address_id as number | undefined);
+    const changes = (data.addresses as Record<string, unknown>[])[0];
+    data.addresses = [{
+      ...(entry && { id: entry.id }),
+      ...Object.fromEntries(
+        ["street", "city", "province", "postal_code", "country"]
+          .filter((key) => entry?.[key] !== undefined && entry[key] !== null)
+          .map((key) => [key, entry[key]]),
+      ),
+      ...changes,
+      name: entry?.name ?? "Work",
+    }];
+  }
+  return data;
+}
+
 async function validateContactCompany(companyId: unknown): Promise<{ id: number; name: string } | null> {
   if (companyId === undefined) return null;
   const response = await clioGet(`/contacts/${companyId}.json`, { fields: "id,name,type" });
-  if (response?.data?.type !== "Company") throw new Error("company_id must identify a Company contact.");
+  if (response?.data?.id !== companyId || response.data.type !== "Company") {
+    throw new Error("company_id must identify the exact Company contact.");
+  }
   return { id: response.data.id, name: response.data.name };
 }
 
@@ -183,15 +238,17 @@ export function registerContactTools(server: McpServer): void {
 
         const result = {
           id: c.id,
+          etag: c.etag ?? null,
           name: c.name,
           first_name: c.first_name ?? null,
           last_name: c.last_name ?? null,
           title: c.title ?? null,
           type: c.type,
           company: c.company ? { id: c.company.id, name: c.company.name } : null,
-          emails: (c.email_addresses ?? []).map((e: any) => ({ label: e.name, address: e.address })),
-          phone_numbers: (c.phone_numbers ?? []).map((p: any) => ({ label: p.name, number: p.number })),
+          emails: (c.email_addresses ?? []).map((e: any) => ({ id: e.id, label: e.name, address: e.address, default_email: e.default_email })),
+          phone_numbers: (c.phone_numbers ?? []).map((p: any) => ({ id: p.id, label: p.name, number: p.number })),
           addresses: (c.addresses ?? []).map((a: any) => ({
+            id: a.id,
             label: a.name,
             street: a.street ?? null,
             city: a.city ?? null,
@@ -266,13 +323,13 @@ export function registerContactTools(server: McpServer): void {
           return writeJsonResult(writePreviewEnvelope(
             "create_contact",
             proposal,
-            makeWritePreviewToken("create_contact", proposal),
+            await makeWritePreviewToken("create_contact", proposal),
             { possible_duplicates: possibleDuplicates },
           ));
         }
 
         if (!input.preview_token) throw new Error("preview_token is required when confirm_write is true.");
-        consumeWritePreviewToken(input.preview_token, "create_contact", proposal);
+        await consumeWritePreviewToken(input.preview_token, "create_contact", proposal);
         const preWriteAuditOk = await recordContactMutation("create_contact", "confirmed", "success", fieldsChanged);
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;
@@ -290,7 +347,7 @@ export function registerContactTools(server: McpServer): void {
           contact: response.data,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error";
+        const message = safeWriteError(error);
         await recordContactMutation("create_contact", confirmationState, "error", fieldsChanged, undefined, message);
         return writeJsonResult({
           error: message,
@@ -310,6 +367,9 @@ export function registerContactTools(server: McpServer): void {
       inputSchema: {
         contact_id: z.number().int().positive().describe("Exact Clio contact ID"),
         ...contactFieldsSchema,
+        email_id: z.number().int().positive().optional().describe("Existing email entry ID; use to select among multiple entries"),
+        phone_id: z.number().int().positive().optional().describe("Existing phone entry ID; use to select among multiple entries"),
+        address_id: z.number().int().positive().optional().describe("Existing address entry ID; use to select among multiple entries"),
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },
@@ -318,18 +378,27 @@ export function registerContactTools(server: McpServer): void {
     async (input) => {
       const confirmationState = input.confirm_write ? "confirmed" : "dry_run";
       let writeAttempted = false;
-      const data = buildContactData(input);
-      const fieldsChanged = Object.keys(data);
+      const fieldsChanged = Object.keys(buildContactData(input));
       try {
         if (fieldsChanged.length === 0) throw new Error("At least one contact field must be supplied.");
+        if ((input.email_id !== undefined && input.email === undefined) ||
+            (input.phone_id !== undefined && input.phone === undefined) ||
+            (input.address_id !== undefined && !fieldsChanged.includes("addresses"))) {
+          throw new Error("An entry selector requires changes to that entry.");
+        }
         const company = await validateContactCompany(input.company_id);
         const currentResponse = await clioGet(`/contacts/${input.contact_id}.json`, {
           fields: CONTACT_DETAIL_FIELDS,
         });
         const current = currentResponse?.data;
-        if (!current?.id) throw new Error("Contact validation failed.");
+        if (current?.id !== input.contact_id) throw new Error("Contact validation failed.");
+        if (typeof current.etag !== "string" || !current.etag.trim()) {
+          throw new Error("Clio did not return a contact ETag; no update can be performed safely.");
+        }
+        const data = buildContactUpdateData(input, current);
         const proposal = {
           record_id: input.contact_id,
+          current_etag: current.etag,
           current_updated_at: current.updated_at,
           current: {
             name: current.name, type: current.type,
@@ -346,18 +415,18 @@ export function registerContactTools(server: McpServer): void {
           );
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
           return writeJsonResult(writePreviewEnvelope(
-            "update_contact", proposal, makeWritePreviewToken("update_contact", proposal),
+            "update_contact", proposal, await makeWritePreviewToken("update_contact", proposal),
           ));
         }
 
         if (!input.preview_token) throw new Error("preview_token is required when confirm_write is true.");
-        consumeWritePreviewToken(input.preview_token, "update_contact", proposal);
+        await consumeWritePreviewToken(input.preview_token, "update_contact", proposal);
         const preWriteAuditOk = await recordContactMutation(
           "update_contact", "confirmed", "success", fieldsChanged, input.contact_id,
         );
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;
-        const response = await clioPatch(`/contacts/${input.contact_id}.json`, { data });
+        const response = await clioPatch(`/contacts/${input.contact_id}.json`, { data }, { "If-Match": current.etag });
         if (!response?.data?.id) throw new Error("Clio returned an invalid update response.");
         const auditOk = await recordContactMutation(
           "update_contact", "confirmed", "success", fieldsChanged, input.contact_id,
@@ -371,7 +440,7 @@ export function registerContactTools(server: McpServer): void {
           contact: response.data,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error";
+        const message = safeWriteError(error);
         await recordContactMutation(
           "update_contact", confirmationState, "error", fieldsChanged, input.contact_id, message,
         );

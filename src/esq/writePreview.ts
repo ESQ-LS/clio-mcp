@@ -1,4 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "crypto";
+import { loadTokens } from "../auth/tokenStorage.js";
+import { getSessionContext } from "../utils/sessionContext.js";
+import { ClioApiError, getClioBaseUrl } from "../utils/clioClient.js";
 
 const PREVIEW_TTL_MS = 15 * 60 * 1000;
 
@@ -8,9 +11,29 @@ interface PreviewClaims {
   fingerprint: string;
   issued_at: number;
   nonce: string;
+  actor: string;
+  process_id: string;
 }
 
 const consumedPreviewNonces = new Map<string, number>();
+// Tokens cannot be replayed after a process restart or on another replica.
+const processId = randomUUID();
+
+async function authenticatedActor(): Promise<string> {
+  const ctx = getSessionContext();
+  // In HTTP mode, never fall back to another user's persisted credentials.
+  const tokens = ctx ? ctx.getTokens() : await loadTokens();
+  if (!tokens?.clio_user_id || !Number.isFinite(tokens.expires_at) || tokens.expires_at <= Date.now()) {
+    throw new Error("A current authenticated Clio user is required for write previews.");
+  }
+  return `${getClioBaseUrl()}:${tokens.clio_user_id}`;
+}
+
+export function safeWriteError(error: unknown): string {
+  // Clio validation errors may echo client input; keep it out of audit entries.
+  if (error instanceof ClioApiError) return `Clio API request failed with status ${error.statusCode}.`;
+  return error instanceof Error ? error.message : "Unknown error";
+}
 
 function previewSecret(): Buffer {
   const value = process.env.ENCRYPTION_KEY?.trim();
@@ -24,25 +47,27 @@ function fingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("base64url");
 }
 
-export function makeWritePreviewToken(action: string, proposal: unknown, now = Date.now()): string {
+export async function makeWritePreviewToken(action: string, proposal: unknown, now = Date.now()): Promise<string> {
   const claims: PreviewClaims = {
     version: 1,
     action,
     fingerprint: fingerprint(proposal),
     issued_at: now,
     nonce: randomUUID(),
+    actor: await authenticatedActor(),
+    process_id: processId,
   };
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
   const signature = createHmac("sha256", previewSecret()).update(payload).digest("base64url");
   return `${payload}.${signature}`;
 }
 
-export function consumeWritePreviewToken(
+export async function consumeWritePreviewToken(
   token: string,
   action: string,
   proposal: unknown,
   now = Date.now(),
-): void {
+): Promise<void> {
   const [payload, suppliedSignature, extra] = token.split(".");
   if (!payload || !suppliedSignature || extra !== undefined) throw new Error("Invalid preview token.");
   const expectedSignature = createHmac("sha256", previewSecret()).update(payload).digest("base64url");
@@ -60,6 +85,9 @@ export function consumeWritePreviewToken(
   }
   if (claims.version !== 1 || claims.action !== action || claims.fingerprint !== fingerprint(proposal)) {
     throw new Error("The proposal changed after preview. Run a new dry-run before confirming.");
+  }
+  if (claims.actor !== await authenticatedActor() || claims.process_id !== processId) {
+    throw new Error("The authenticated user or server changed after preview. Run a new dry-run before confirming.");
   }
   if (!Number.isFinite(claims.issued_at) || claims.issued_at > now || now - claims.issued_at > PREVIEW_TTL_MS) {
     throw new Error("The preview token expired. Run a new dry-run before confirming.");

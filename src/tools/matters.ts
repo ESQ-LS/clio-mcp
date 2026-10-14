@@ -5,6 +5,7 @@ import { appendAuditLog } from "../utils/auditLog.js";
 import {
   consumeWritePreviewToken,
   makeWritePreviewToken,
+  safeWriteError,
   writeJsonResult,
   writePreviewEnvelope,
 } from "../esq/writePreview.js";
@@ -18,7 +19,7 @@ const MATTER_LIST_FIELDS =
   "id,display_number,description,status,client{id,name},practice_area{id,name},open_date,close_date";
 
 const MATTER_DETAIL_FIELDS =
-  "id,display_number,description,status,client{id,name},practice_area{id,name},open_date,close_date,billable," +
+  "id,etag,display_number,description,status,client{id,name},practice_area{id,name},open_date,close_date,billable," +
   "responsible_attorney{id,name},originating_attorney{id,name},client_reference,updated_at";
 
 const matterStatusSchema = z.enum(["open", "pending", "closed"]);
@@ -55,12 +56,12 @@ async function resolveMatterReferences(input: Record<string, unknown>) {
   const refs: Record<string, unknown> = {};
   if (input.client_id !== undefined) {
     const response = await clioGet(`/contacts/${input.client_id}.json`, { fields: "id,name,type" });
-    if (!response?.data?.id) throw new Error("Client validation failed.");
+    if (response?.data?.id !== input.client_id) throw new Error("Client validation failed.");
     refs.client = { id: response.data.id, name: response.data.name, type: response.data.type };
   }
   if (input.practice_area_id !== undefined) {
     const response = await clioGet(`/practice_areas/${input.practice_area_id}.json`, { fields: "id,name" });
-    if (!response?.data?.id) throw new Error("Practice-area validation failed.");
+    if (response?.data?.id !== input.practice_area_id) throw new Error("Practice-area validation failed.");
     refs.practice_area = { id: response.data.id, name: response.data.name };
   }
   for (const [inputKey, outputKey] of [
@@ -69,7 +70,7 @@ async function resolveMatterReferences(input: Record<string, unknown>) {
   ] as const) {
     if (input[inputKey] !== undefined) {
       const response = await clioGet(`/users/${input[inputKey]}.json`, { fields: "id,name,enabled" });
-      if (!response?.data?.id || response.data.enabled === false) throw new Error(`${outputKey} validation failed.`);
+      if (response?.data?.id !== input[inputKey] || response.data.enabled === false) throw new Error(`${outputKey} validation failed.`);
       refs[outputKey] = { id: response.data.id, name: response.data.name };
     }
   }
@@ -163,6 +164,7 @@ export function registerMatterTools(server: McpServer): void {
 
         const result = {
           id: m.id,
+          etag: m.etag ?? null,
           display_number: m.display_number,
           description: m.description,
           status: m.status,
@@ -235,12 +237,12 @@ export function registerMatterTools(server: McpServer): void {
           const auditOk = await recordMatterMutation("create_matter", "dry_run", "success", fieldsChanged);
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
           return writeJsonResult(writePreviewEnvelope(
-            "create_matter", proposal, makeWritePreviewToken("create_matter", proposal),
+            "create_matter", proposal, await makeWritePreviewToken("create_matter", proposal),
           ));
         }
 
         if (!input.preview_token) throw new Error("preview_token is required when confirm_write is true.");
-        consumeWritePreviewToken(input.preview_token, "create_matter", proposal);
+        await consumeWritePreviewToken(input.preview_token, "create_matter", proposal);
         const preWriteAuditOk = await recordMatterMutation("create_matter", "confirmed", "success", fieldsChanged);
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;
@@ -258,7 +260,7 @@ export function registerMatterTools(server: McpServer): void {
           matter: response.data,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error";
+        const message = safeWriteError(error);
         await recordMatterMutation("create_matter", confirmationState, "error", fieldsChanged, undefined, message);
         return writeJsonResult({
           error: message,
@@ -294,10 +296,14 @@ export function registerMatterTools(server: McpServer): void {
           fields: MATTER_DETAIL_FIELDS,
         });
         const current = currentResponse?.data;
-        if (!current?.id) throw new Error("Matter validation failed.");
+        if (current?.id !== input.matter_id) throw new Error("Matter validation failed.");
+        if (typeof current.etag !== "string" || !current.etag.trim()) {
+          throw new Error("Clio did not return a matter ETag; no update can be performed safely.");
+        }
         const references = await resolveMatterReferences(input);
         const proposal = {
           record_id: input.matter_id,
+          current_etag: current.etag,
           current_updated_at: current.updated_at,
           current: {
             display_number: current.display_number,
@@ -315,18 +321,18 @@ export function registerMatterTools(server: McpServer): void {
           );
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
           return writeJsonResult(writePreviewEnvelope(
-            "update_matter", proposal, makeWritePreviewToken("update_matter", proposal),
+            "update_matter", proposal, await makeWritePreviewToken("update_matter", proposal),
           ));
         }
 
         if (!input.preview_token) throw new Error("preview_token is required when confirm_write is true.");
-        consumeWritePreviewToken(input.preview_token, "update_matter", proposal);
+        await consumeWritePreviewToken(input.preview_token, "update_matter", proposal);
         const preWriteAuditOk = await recordMatterMutation(
           "update_matter", "confirmed", "success", fieldsChanged, input.matter_id,
         );
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;
-        const response = await clioPatch(`/matters/${input.matter_id}.json`, { data });
+        const response = await clioPatch(`/matters/${input.matter_id}.json`, { data }, { "If-Match": current.etag });
         if (!response?.data?.id) throw new Error("Clio returned an invalid update response.");
         const auditOk = await recordMatterMutation(
           "update_matter", "confirmed", "success", fieldsChanged, input.matter_id,
@@ -340,7 +346,7 @@ export function registerMatterTools(server: McpServer): void {
           matter: response.data,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error";
+        const message = safeWriteError(error);
         await recordMatterMutation(
           "update_matter", confirmationState, "error", fieldsChanged, input.matter_id, message,
         );
