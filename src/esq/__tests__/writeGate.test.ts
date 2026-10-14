@@ -14,6 +14,10 @@ function registeredWith(writeTools: string): string[] {
   server.registerTool("update_time_entry", {} as any, vi.fn());
   server.registerTool("log_time_entry", {} as any, vi.fn());
   server.registerTool("create_activity", {} as any, vi.fn());
+  server.registerTool("create_contact", {} as any, vi.fn());
+  server.registerTool("update_contact", {} as any, vi.fn());
+  server.registerTool("create_matter", {} as any, vi.fn());
+  server.registerTool("update_matter", {} as any, vi.fn());
   return names;
 }
 
@@ -29,6 +33,16 @@ describe("ESQ controlled time-entry write gate", () => {
       "list_time_entries",
       "create_time_entry",
       "update_time_entry",
+    ]);
+  });
+
+  it("exposes only expressly allowlisted intake writes", () => {
+    expect(registeredWith("create_contact,update_contact,create_matter,update_matter")).toEqual([
+      "list_time_entries",
+      "create_contact",
+      "update_contact",
+      "create_matter",
+      "update_matter",
     ]);
   });
 });
