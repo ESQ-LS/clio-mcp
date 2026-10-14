@@ -25,6 +25,9 @@ const PERMANENTLY_BLOCKED = new Set<string>(["upload_document"]);
  */
 const WRITE_TOOLS = new Set<string>([
   "create_matter",
+  "update_matter",
+  "create_contact",
+  "update_contact",
   "upload_document",
   "create_calendar_entry",
   "log_time_entry",

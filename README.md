@@ -339,20 +339,32 @@ Claude selects and calls these tools automatically based on your questions. You 
 | `auth_status` | Shows whether you are currently authenticated and when your session expires |
 | `logout` | Clears your stored credentials from this machine |
 
-### Matters (3 tools)
+### Matters (4 tools)
 
 | Tool | Inputs | What it does |
 |---|---|---|
 | `list_matters` | `status` (open/pending/closed), `limit` | Lists matters with optional status filter |
 | `get_matter` | `matter_id` | Returns full detail for a specific matter |
-| `create_matter` | `client_id`, `description`, `status`, `open_date`, `practice_area_id`, `billable`, `responsible_attorney_id`, `originating_attorney_id`, `client_reference` | Creates a new matter; status defaults to Open, billable defaults to true |
+| `create_matter` | `client_id`, `description`, `status`, `open_date`, `practice_area_id`, `billable`, `responsible_attorney_id`, `originating_attorney_id`, `client_reference`, `confirm_write`, `preview_token` | Dry-runs and validates a new matter; status defaults to Pending for intake and confirmation requires the preview token |
+| `update_matter` | `matter_id`, editable matter fields, `confirm_write`, `preview_token` | Dry-runs exact changes and invalidates the preview if the matter changes before confirmation |
 
-### Contacts (2 tools)
+### Contacts (4 tools)
 
 | Tool | Inputs | What it does |
 |---|---|---|
 | `search_contacts` | `query`, `limit`, `page_token` | Searches contacts by name, email, or company; returns a paginated envelope with `total_count`, `has_more`, and `next_page_token` — pass the token back to fetch the next page |
 | `get_contact` | `contact_id` | Returns full detail for one exact contact, including emails, phone numbers, addresses, and custom-field definition IDs, names, types, and values |
+| `create_contact` | person/company details, `confirm_write`, `preview_token` | Dry-runs a new contact, displays possible duplicates, and requires the preview token to write |
+| `update_contact` | `contact_id`, editable contact fields, `confirm_write`, `preview_token` | Dry-runs exact changes and invalidates the preview if the contact changes before confirmation |
+
+The intake project is tracked in [CLIENT-INTAKE-PROJECT.md](docs/CLIENT-INTAKE-PROJECT.md).
+Contact and matter updates use the current Clio ETag in `If-Match` so concurrent
+edits cannot silently overwrite changes. Contact email, phone, and address changes
+reuse existing entry IDs. When there are multiple candidates, supply `email_id`,
+`phone_id`, or `address_id` from `get_contact`; omitted address fields are preserved.
+If no entry exists, a Work entry is added. Tokens are bound to the authenticated
+Clio user, API region, and server process; preview again after a restart or replica
+change. All four tools remain gated by `ESQ_WRITE_TOOLS`.
 
 ### Documents (3 tools)
 

@@ -46,6 +46,7 @@ const READ_ONLY_ANNOTATIONS = {
 const ADDITIVE_WRITE_TOOLS = [
   "create_activity",
   "create_calendar_entry",
+  "create_contact",
   "create_matter",
   "create_note",
   "create_task",
@@ -56,6 +57,8 @@ const ADDITIVE_WRITE_TOOLS = [
 
 const DESTRUCTIVE_UPDATE_TOOLS = [
   "complete_task",
+  "update_contact",
+  "update_matter",
   "update_task",
 ] as const;
 
