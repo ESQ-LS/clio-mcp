@@ -7,17 +7,11 @@
  * in the ESQ_WRITE_TOOLS environment variable (comma-separated). With that
  * variable unset or empty, the server exposes read tools only.
  *
- * `upload_document` is blocked unconditionally and cannot be re-enabled via
- * configuration. Clio documents are populated from the Clio Drive tree and
- * mirrored one-way into SharePoint; a second write path into Clio documents
- * produces orphaned files with no counterpart in the mirror. If the SharePoint
- * mirror is ever retired, remove the entry from PERMANENTLY_BLOCKED below --
- * deliberately a code change, not a config change.
+ * Document uploads enter through Clio, upstream of the Clio-managed OneDrive
+ * `/Clio` tree and its one-way SharePoint mirror. They remain disabled unless
+ * explicitly named here, like every other production write tool.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-
-/** Cannot be enabled by configuration. Requires a code change. */
-const PERMANENTLY_BLOCKED = new Set<string>(["upload_document"]);
 
 /**
  * Every tool that mutates Clio state. Auth tools (`authenticate`, `logout`)
@@ -25,6 +19,9 @@ const PERMANENTLY_BLOCKED = new Set<string>(["upload_document"]);
  */
 const WRITE_TOOLS = new Set<string>([
   "create_matter",
+  "update_matter",
+  "create_contact",
+  "update_contact",
   "upload_document",
   "create_calendar_entry",
   "log_time_entry",
@@ -35,6 +32,7 @@ const WRITE_TOOLS = new Set<string>([
   "update_task",
   "complete_task",
   "create_note",
+  "create_communication",
 ]);
 
 function parseEnabled(): Set<string> {
@@ -46,12 +44,6 @@ function parseEnabled(): Set<string> {
 
   const enabled = new Set<string>();
   for (const name of names) {
-    if (PERMANENTLY_BLOCKED.has(name)) {
-      console.error(
-        `[esq] ESQ_WRITE_TOOLS lists "${name}", which is permanently blocked in this fork. Ignoring.`,
-      );
-      continue;
-    }
     if (!WRITE_TOOLS.has(name)) {
       console.error(
         `[esq] ESQ_WRITE_TOOLS lists "${name}", which is not a known write tool. Ignoring.`,
@@ -59,6 +51,11 @@ function parseEnabled(): Set<string> {
       continue;
     }
     enabled.add(name);
+  }
+  const mode = (process.env.TRANSPORT ?? "http").trim().toLowerCase();
+  if (enabled.size > 0 && mode === "http" && !process.env.MCP_API_KEY?.trim()) {
+    console.error("[esq] Refusing to expose write tools over HTTP without MCP_API_KEY.");
+    return new Set();
   }
   return enabled;
 }

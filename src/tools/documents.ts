@@ -1,10 +1,20 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import fs from "fs/promises";
+import { constants, createReadStream, createWriteStream } from "fs";
+import { pipeline } from "stream/promises";
 import path from "path";
+import os from "os";
 import crypto from "crypto";
 import { clioGet, clioPost, clioPut, clioPatch, getClioBaseUrl, ClioApiError, extractNextPageToken } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import {
+  consumeWritePreviewToken,
+  makeWritePreviewToken,
+  safeWriteError,
+  writeJsonResult,
+  writePreviewEnvelope,
+} from "../esq/writePreview.js";
 import { CLIO_CREATE_TOOL_ANNOTATIONS, CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const DOCUMENT_LIST_FIELDS = "id,name,content_type,size,created_at,matter{id,display_number}";
@@ -41,6 +51,68 @@ async function partMd5(filePath: string, start: number, length: number): Promise
     await fh.close();
   }
   return crypto.createHash("md5").update(buf).digest("base64");
+}
+
+async function fileSha256(filePath: string): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", resolve);
+  });
+  return hash.digest("hex");
+}
+
+type UploadSnapshot = {
+  path: string;
+  size: number;
+  sha256: string;
+  cleanup: () => Promise<void>;
+};
+
+async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSnapshot> {
+  const configuredRoot = process.env.ESQ_CLIO_UPLOAD_ROOT?.trim();
+  if (!configuredRoot || !path.isAbsolute(configuredRoot)) {
+    throw new Error("Server configuration error: ESQ_CLIO_UPLOAD_ROOT must be an absolute path.");
+  }
+  if (!path.isAbsolute(filePath)) throw new Error("file_path must be absolute.");
+
+  const inputStats = await fs.lstat(filePath);
+  if (inputStats.isSymbolicLink()) throw new Error("Symbolic-link uploads are not permitted.");
+  const [approvedRoot, approvedFile] = await Promise.all([
+    fs.realpath(configuredRoot),
+    fs.realpath(filePath),
+  ]);
+  const relative = path.relative(approvedRoot, approvedFile);
+  if (!relative || relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+    throw new Error("file_path is outside the approved upload root.");
+  }
+  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), "esq-clio-upload-"));
+  const snapshotPath = path.join(snapshotDir, "payload");
+  let sourceHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
+  try {
+    sourceHandle = await fs.open(approvedFile, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const sourceStats = await sourceHandle.stat();
+    if (!sourceStats.isFile()) throw new Error("file_path must identify a regular file.");
+    await pipeline(
+      sourceHandle.createReadStream({ autoClose: false }),
+      createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }),
+    );
+    const snapshotStats = await fs.stat(snapshotPath);
+    const sha256 = await fileSha256(snapshotPath);
+    return {
+      path: snapshotPath,
+      size: snapshotStats.size,
+      sha256,
+      cleanup: () => fs.rm(snapshotDir, { recursive: true, force: true }),
+    };
+  } catch (error) {
+    await fs.rm(snapshotDir, { recursive: true, force: true });
+    throw error;
+  } finally {
+    await sourceHandle?.close();
+  }
 }
 
 async function putPartToS3(
@@ -185,24 +257,65 @@ export function registerDocumentTools(server: McpServer): void {
   server.registerTool(
     "upload_document",
     {
-      description: "Upload a local file to a Clio matter as a document",
+      title: "Upload a controlled document to a Clio matter",
+      description: "Dry-run by default. Verifies the exact local file and target matter, then displays filename, size, type, and SHA-256. A production upload requires confirm_write: true plus the unexpired preview_token from an unchanged proposal.",
       inputSchema: {
         file_path: z.string().describe("Absolute path to the local file to upload"),
         matter_id: z.number().int().positive().describe("Clio matter ID to attach the document to"),
         name: z.string().optional().describe("Document name in Clio; defaults to the file's basename"),
         content_type: z.string().optional().describe("MIME type; auto-detected from extension if omitted"),
+        confirm_write: z.boolean().default(false),
+        preview_token: z.string().optional(),
       },
       annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
-    async ({ file_path, matter_id, name, content_type }) => {
+    async ({ file_path, matter_id, name, content_type, confirm_write, preview_token }) => {
+      let writeAttempted = false;
+      let snapshot: UploadSnapshot | undefined;
       try {
-        const stats = await fs.stat(file_path);
-        const totalSize = stats.size;
+        snapshot = await createApprovedUploadSnapshot(file_path);
+        const totalSize = snapshot.size;
         const originalExt = path.extname(file_path);
         const docName = name
           ? (path.extname(name) ? name : name + originalExt)
           : path.basename(file_path);
         const mime = content_type ?? guessMime(docName);
+        const sha256 = snapshot.sha256;
+        const matterResponse = await clioGet(`/matters/${matter_id}.json`, {
+          fields: "id,display_number,description,status",
+        });
+        if (matterResponse?.data?.id !== matter_id) throw new Error("Matter validation failed.");
+        const proposal = {
+          matter: {
+            id: matter_id,
+            display_number: matterResponse.data.display_number,
+            description: matterResponse.data.description,
+            status: matterResponse.data.status,
+          },
+          document: { name: docName, content_type: mime, size: totalSize, sha256 },
+        };
+
+        if (!confirm_write) {
+          const auditOk = await appendAuditLog({
+            tool: "upload_document", action: "create", confirmation_state: "dry_run",
+            outcome: "success", matter_id,
+            args: { confirm_write: false, matter_id, size: totalSize },
+          });
+          if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
+          return writeJsonResult(writePreviewEnvelope(
+            "upload_document", proposal, await makeWritePreviewToken("upload_document", proposal),
+          ));
+        }
+
+        if (!preview_token) throw new Error("preview_token is required when confirm_write is true.");
+        await consumeWritePreviewToken(preview_token, "upload_document", proposal);
+        const preWriteAuditOk = await appendAuditLog({
+          tool: "upload_document", action: "create", confirmation_state: "confirmed",
+          outcome: "attempt", matter_id,
+          args: { confirm_write: true, matter_id, size: totalSize },
+        });
+        if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio upload was attempted.");
+        writeAttempted = true;
 
         type PartDescriptor = { part_number: number; content_length: number; content_md5: string; offset: number };
         const allParts: PartDescriptor[] = [];
@@ -210,7 +323,7 @@ export function registerDocumentTools(server: McpServer): void {
         let partNumber = 1;
         while (offset < totalSize) {
           const length = Math.min(PART_SIZE, totalSize - offset);
-          const md5 = await partMd5(file_path, offset, length);
+          const md5 = await partMd5(snapshot.path, offset, length);
           allParts.push({ part_number: partNumber, content_length: length, content_md5: md5, offset });
           offset += length;
           partNumber++;
@@ -238,7 +351,7 @@ export function registerDocumentTools(server: McpServer): void {
         for (const multipart of version.multiparts as any[]) {
           const desc = firstBatch.find((p) => p.part_number === multipart.part_number)!;
           const partHeaders = multipart.put_headers ?? [];
-          await putPartToS3(file_path, desc.offset, desc.content_length, multipart.put_url, partHeaders);
+          await putPartToS3(snapshot.path, desc.offset, desc.content_length, multipart.put_url, partHeaders);
         }
 
         let batchStart = MAX_PARTS_PER_REQUEST;
@@ -259,7 +372,7 @@ export function registerDocumentTools(server: McpServer): void {
           for (const multipart of batchResp.data.multiparts as any[]) {
             const desc = batch.find((p) => p.part_number === multipart.part_number)!;
             const partHeaders = multipart.put_headers ?? [];
-            await putPartToS3(file_path, desc.offset, desc.content_length, multipart.put_url, partHeaders);
+            await putPartToS3(snapshot.path, desc.offset, desc.content_length, multipart.put_url, partHeaders);
           }
           batchStart += MAX_PARTS_PER_REQUEST;
         }
@@ -270,7 +383,9 @@ export function registerDocumentTools(server: McpServer): void {
 
         await appendAuditLog({
           tool: "upload_document",
-          args: { file_path, matter_id, name: docName },
+          action: "create",
+          confirmation_state: "confirmed",
+          args: { confirm_write: true, matter_id, size: totalSize },
           outcome: "success",
           matter_id,
         });
@@ -282,14 +397,23 @@ export function registerDocumentTools(server: McpServer): void {
           }],
         };
       } catch (err: any) {
+        const message = safeWriteError(err);
         await appendAuditLog({
           tool: "upload_document",
-          args: { file_path, matter_id },
+          action: "create",
+          confirmation_state: confirm_write ? "confirmed" : "dry_run",
+          args: { confirm_write, matter_id },
           outcome: "error",
-          error_message: err.message,
+          error_message: message,
           matter_id,
         });
-        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        return writeJsonResult({
+          error: message,
+          write_performed: writeAttempted ? "unknown" : false,
+          ...(writeAttempted && { recovery: "Search the target Clio matter for the proposed document before retrying; the upload outcome may be ambiguous." }),
+        }, true);
+      } finally {
+        await snapshot?.cleanup();
       }
     }
   );

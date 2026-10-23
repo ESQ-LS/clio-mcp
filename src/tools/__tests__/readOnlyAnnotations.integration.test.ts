@@ -46,6 +46,8 @@ const READ_ONLY_ANNOTATIONS = {
 const ADDITIVE_WRITE_TOOLS = [
   "create_activity",
   "create_calendar_entry",
+  "create_communication",
+  "create_contact",
   "create_matter",
   "create_note",
   "create_task",
@@ -56,6 +58,8 @@ const ADDITIVE_WRITE_TOOLS = [
 
 const DESTRUCTIVE_UPDATE_TOOLS = [
   "complete_task",
+  "update_contact",
+  "update_matter",
   "update_task",
 ] as const;
 
@@ -65,6 +69,7 @@ const NONDESTRUCTIVE_UPDATE_TOOLS = [
 
 afterEach(() => {
   delete process.env.ESQ_WRITE_TOOLS;
+  delete process.env.TRANSPORT;
 });
 
 function registerAllTools(server: McpServer): void {
@@ -83,10 +88,11 @@ function registerAllTools(server: McpServer): void {
   registerAuditExportTool(server);
 }
 
-async function discoverTools(productionGate: boolean) {
+async function discoverTools(productionGate: boolean, enabledWrites = "create_time_entry,update_time_entry") {
   const server = new McpServer({ name: "synthetic-clio-mcp", version: "test" });
   if (productionGate) {
-    process.env.ESQ_WRITE_TOOLS = "create_time_entry,update_time_entry";
+    process.env.ESQ_WRITE_TOOLS = enabledWrites;
+    process.env.TRANSPORT = "stdio";
     applyWriteGate(server);
   }
   registerAllTools(server);
@@ -216,6 +222,28 @@ describe("read-only MCP annotations", () => {
       for (const tool of tools) {
         expect(tool.annotations, tool.name).toBeDefined();
       }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("publishes exactly the approved solo-practice routine write surface", async () => {
+    const routineWrites = [
+      "create_contact", "update_contact", "create_matter", "update_matter",
+      "create_task", "update_task", "complete_task", "create_note",
+      "create_communication", "create_calendar_entry", "upload_document",
+      "create_time_entry", "update_time_entry",
+    ];
+    const { client, server, tools } = await discoverTools(true, routineWrites.join(","));
+    try {
+      const exposedWrites = tools
+        .filter((tool) => tool.annotations?.readOnlyHint === false && !["authenticate", "logout"].includes(tool.name))
+        .map((tool) => tool.name)
+        .sort();
+      expect(exposedWrites).toEqual([...routineWrites].sort());
+      expect(exposedWrites).not.toContain("create_activity");
+      expect(exposedWrites).not.toContain("log_time_entry");
     } finally {
       await client.close();
       await server.close();

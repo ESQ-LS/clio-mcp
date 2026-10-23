@@ -3,14 +3,30 @@ import z from "zod";
 import { clioGet, clioPost, clioPatch } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
 import {
+  consumeWritePreviewToken, makeWritePreviewToken, safeWriteError,
+  writeJsonResult, writePreviewEnvelope,
+} from "../esq/writePreview.js";
+import {
   CLIO_CREATE_TOOL_ANNOTATIONS,
   CLIO_READ_ONLY_TOOL_ANNOTATIONS,
   CLIO_UPDATE_TOOL_ANNOTATIONS,
 } from "./annotations.js";
 
-const TASK_FIELDS = "id,name,priority,due_at,status,assignee{id,name},matter{id,display_number},reminders{id,notification_method}";
+const TASK_FIELDS = "id,etag,name,description,priority,due_at,status,completed_at,assignee{id,name},matter{id,display_number,description,status},reminders{id,notification_method}";
 
 const STATUS_MAP: Record<string, string> = { Pending: "pending", Complete: "complete", "In Progress": "in_progress", "In Review": "in_review", "Draft": "draft" };
+
+function buildTaskData(input: Record<string, unknown>): Record<string, unknown> {
+  const data: Record<string, unknown> = {};
+  for (const key of ["name", "description", "priority"] as const) {
+    if (input[key] !== undefined) data[key] = input[key];
+  }
+  if (input.due_date !== undefined) data.due_at = `${input.due_date}T00:00:00Z`;
+  if (input.status !== undefined) data.status = STATUS_MAP[input.status as string];
+  if (input.matter_id !== undefined) data.matter = { id: input.matter_id };
+  if (input.assignee_id !== undefined) data.assignee = { id: input.assignee_id, type: "User" };
+  return data;
+}
 
 export function registerTaskTools(server: McpServer): void {
   server.registerTool(
@@ -79,7 +95,8 @@ export function registerTaskTools(server: McpServer): void {
   server.registerTool(
     "create_task",
     {
-      description: "Create a task on a matter in Clio",
+      title: "Create a controlled Clio task",
+      description: "Dry-run by default. Validates the matter and assignee and displays the complete task. A production write requires confirm_write: true plus the unexpired preview_token from an unchanged proposal.",
       inputSchema: {
         matter_id: z.number().int().positive().describe("Matter ID to associate the task with"),
         name: z.string().min(1).describe("Task name / description"),
@@ -87,26 +104,52 @@ export function registerTaskTools(server: McpServer): void {
         priority: z.enum(["High", "Normal", "Low"]).default("Normal").describe("Task priority"),
         due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("ISO date (YYYY-MM-DD) when the task is due"),
         assignee_id: z.number().int().positive().optional().describe("Clio user ID to assign the task to"),
+        confirm_write: z.boolean().default(false),
+        preview_token: z.string().optional(),
       },
       annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
-    async ({ matter_id, name, description, priority, due_date, assignee_id }) => {
+    async ({ matter_id, name, description, priority, due_date, assignee_id, confirm_write, preview_token }) => {
+      let writeAttempted = false;
       try {
-        const taskData: Record<string, unknown> = {
-          name,
-          description,
-          priority,
-          matter: { id: matter_id },
+        const taskData = buildTaskData({ matter_id, name, description, priority, due_date, assignee_id });
+        const matter = (await clioGet(`/matters/${matter_id}.json`, { fields: "id,display_number,description,status" }))?.data;
+        if (matter?.id !== matter_id) throw new Error("Matter validation failed.");
+        const assignee = assignee_id === undefined ? null : (await clioGet(`/users/${assignee_id}.json`, { fields: "id,name,enabled" }))?.data;
+        if (assignee_id !== undefined && (assignee?.id !== assignee_id || assignee.enabled === false)) {
+          throw new Error("Assignee validation failed.");
+        }
+        const proposal = {
+          matter: { id: matter.id, display_number: matter.display_number, description: matter.description, status: matter.status },
+          assignee: assignee ? { id: assignee.id, name: assignee.name } : null,
+          task: taskData,
         };
-        if (due_date) taskData["due_at"] = `${due_date}T00:00:00Z`; // midnight UTC — consistent with calendar tool convention
-        if (assignee_id) taskData["assignee"] = { id: assignee_id, type: "User" };
+        if (!confirm_write) {
+          const auditOk = await appendAuditLog({
+            tool: "create_task", action: "create", confirmation_state: "dry_run",
+            args: { confirm_write: false, matter_id, priority, due_date, assignee_id }, outcome: "success", matter_id,
+          });
+          if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
+          return writeJsonResult(writePreviewEnvelope(
+            "create_task", proposal, await makeWritePreviewToken("create_task", proposal),
+          ));
+        }
+        if (!preview_token) throw new Error("preview_token is required when confirm_write is true.");
+        await consumeWritePreviewToken(preview_token, "create_task", proposal);
+        const preWriteAuditOk = await appendAuditLog({
+          tool: "create_task", action: "create", confirmation_state: "confirmed",
+          args: { confirm_write: true, matter_id, priority, due_date, assignee_id }, outcome: "attempt", matter_id,
+        });
+        if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
+        writeAttempted = true;
 
         const data = await clioPost("/tasks.json", { data: taskData });
         const task = data.data;
 
         await appendAuditLog({
           tool: "create_task",
-          args: { matter_id, name, priority, due_date, assignee_id },
+          action: "create", confirmation_state: "confirmed",
+          args: { confirm_write: true, matter_id, priority, due_date, assignee_id },
           outcome: "success",
           matter_id,
         });
@@ -127,14 +170,16 @@ export function registerTaskTools(server: McpServer): void {
           }],
         };
       } catch (err: any) {
+        const message = safeWriteError(err);
         await appendAuditLog({
           tool: "create_task",
-          args: { matter_id, name, priority, due_date, assignee_id },
+          action: "create", confirmation_state: confirm_write ? "confirmed" : "dry_run",
+          args: { confirm_write, matter_id, priority, due_date, assignee_id },
           outcome: "error",
-          error_message: err.message,
+          error_message: message,
           matter_id,
         });
-        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        return writeJsonResult({ error: message, write_performed: writeAttempted ? "unknown" : false }, true);
       }
     }
   );
@@ -142,7 +187,8 @@ export function registerTaskTools(server: McpServer): void {
   server.registerTool(
     "update_task",
     {
-      description: "Update one or more fields on an existing Clio task",
+      title: "Update a controlled Clio task",
+      description: "Dry-run by default. Reads the current task, validates changed references, and displays the exact changes. A production write requires confirm_write: true plus an unchanged preview_token and current ETag.",
       inputSchema: {
         task_id: z.number().int().positive().describe("ID of the task to update"),
         name: z.string().min(1).optional().describe("New task name"),
@@ -151,28 +197,57 @@ export function registerTaskTools(server: McpServer): void {
         due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("ISO date (YYYY-MM-DD) for due date"),
         status: z.enum(["Pending", "Complete", "In Progress", "In Review", "Draft"]).optional().describe("New task status"),
         assignee_id: z.number().int().positive().optional().describe("Clio user ID to reassign the task to"),
+        confirm_write: z.boolean().default(false),
+        preview_token: z.string().optional(),
       },
       annotations: CLIO_UPDATE_TOOL_ANNOTATIONS,
     },
-    async ({ task_id, name, description, priority, due_date, status, assignee_id }) => {
+    async ({ task_id, name, description, priority, due_date, status, assignee_id, confirm_write, preview_token }) => {
       if ([name, description, priority, due_date, status, assignee_id].every((v) => v === undefined)) {
         return { content: [{ type: "text", text: "Error: at least one field to update must be provided" }], isError: true };
       }
+      let writeAttempted = false;
       try {
-        const taskData: Record<string, unknown> = {};
-        if (name !== undefined) taskData["name"] = name;
-        if (description !== undefined) taskData["description"] = description;
-        if (priority !== undefined) taskData["priority"] = priority;
-        if (due_date !== undefined) taskData["due_at"] = `${due_date}T00:00:00Z`;
-        if (status !== undefined) taskData["status"] = STATUS_MAP[status];
-        if (assignee_id !== undefined) taskData["assignee"] = { id: assignee_id, type: "User" };
+        const taskData = buildTaskData({ name, description, priority, due_date, status, assignee_id });
+        const current = (await clioGet(`/tasks/${task_id}.json`, { fields: TASK_FIELDS }))?.data;
+        if (current?.id !== task_id) throw new Error("Task validation failed.");
+        if (typeof current.etag !== "string" || !current.etag.trim()) throw new Error("Clio did not return a task ETag; no update can be performed safely.");
+        const assignee = assignee_id === undefined ? null : (await clioGet(`/users/${assignee_id}.json`, { fields: "id,name,enabled" }))?.data;
+        if (assignee_id !== undefined && (assignee?.id !== assignee_id || assignee.enabled === false)) throw new Error("Assignee validation failed.");
+        const proposal = {
+          record_id: task_id, current_etag: current.etag,
+          current: { name: current.name, description: current.description, priority: current.priority, due_at: current.due_at, status: current.status, assignee: current.assignee, matter: current.matter },
+          changes: taskData,
+          assignee: assignee ? { id: assignee.id, name: assignee.name } : null,
+        };
+        if (!confirm_write) {
+          const auditOk = await appendAuditLog({
+            tool: "update_task", action: "update", confirmation_state: "dry_run",
+            args: { confirm_write: false, task_id, fields_changed: Object.keys(taskData) }, outcome: "success",
+            ...(current.matter?.id && { matter_id: current.matter.id }),
+          });
+          if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
+          return writeJsonResult(writePreviewEnvelope(
+            "update_task", proposal, await makeWritePreviewToken("update_task", proposal),
+          ));
+        }
+        if (!preview_token) throw new Error("preview_token is required when confirm_write is true.");
+        await consumeWritePreviewToken(preview_token, "update_task", proposal);
+        const preWriteAuditOk = await appendAuditLog({
+          tool: "update_task", action: "update", confirmation_state: "confirmed",
+          args: { confirm_write: true, task_id, fields_changed: Object.keys(taskData) }, outcome: "attempt",
+          ...(current.matter?.id && { matter_id: current.matter.id }),
+        });
+        if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
+        writeAttempted = true;
 
-        const data = await clioPatch(`/tasks/${task_id}.json`, { data: taskData });
+        const data = await clioPatch(`/tasks/${task_id}.json`, { data: taskData }, { "If-Match": current.etag });
         const task = data.data;
 
         await appendAuditLog({
           tool: "update_task",
-          args: { task_id, name, description, priority, due_date, status, assignee_id },
+          action: "update", confirmation_state: "confirmed",
+          args: { confirm_write: true, task_id, fields_changed: Object.keys(taskData) },
           outcome: "success",
           ...(task.matter?.id && { matter_id: task.matter.id }),
         });
@@ -194,13 +269,15 @@ export function registerTaskTools(server: McpServer): void {
           }],
         };
       } catch (err: any) {
+        const message = safeWriteError(err);
         await appendAuditLog({
           tool: "update_task",
-          args: { task_id, name, description, priority, due_date, status, assignee_id },
+          action: "update", confirmation_state: confirm_write ? "confirmed" : "dry_run",
+          args: { confirm_write, task_id },
           outcome: "error",
-          error_message: err.message,
+          error_message: message,
         });
-        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        return writeJsonResult({ error: message, write_performed: writeAttempted ? "unknown" : false }, true);
       }
     }
   );
@@ -208,20 +285,52 @@ export function registerTaskTools(server: McpServer): void {
   server.registerTool(
     "complete_task",
     {
-      description: "Mark a Clio task as complete",
+      title: "Complete a controlled Clio task",
+      description: "Dry-run by default. Displays the exact task and matter before completion. A production write requires confirm_write: true plus an unchanged preview_token and current ETag.",
       inputSchema: {
         task_id: z.number().int().positive().describe("ID of the task to mark complete"),
+        confirm_write: z.boolean().default(false),
+        preview_token: z.string().optional(),
       },
       annotations: CLIO_UPDATE_TOOL_ANNOTATIONS,
     },
-    async ({ task_id }) => {
+    async ({ task_id, confirm_write, preview_token }) => {
+      let writeAttempted = false;
       try {
-        const data = await clioPatch(`/tasks/${task_id}.json`, { data: { status: STATUS_MAP["Complete"] } });
+        const current = (await clioGet(`/tasks/${task_id}.json`, { fields: TASK_FIELDS }))?.data;
+        if (current?.id !== task_id) throw new Error("Task validation failed.");
+        if (typeof current.etag !== "string" || !current.etag.trim()) throw new Error("Clio did not return a task ETag; no update can be performed safely.");
+        const proposal = {
+          record_id: task_id, current_etag: current.etag,
+          current: { name: current.name, status: current.status, due_at: current.due_at, matter: current.matter },
+          changes: { status: STATUS_MAP["Complete"] },
+        };
+        if (!confirm_write) {
+          const auditOk = await appendAuditLog({
+            tool: "complete_task", action: "update", confirmation_state: "dry_run",
+            args: { confirm_write: false, task_id }, outcome: "success",
+            ...(current.matter?.id && { matter_id: current.matter.id }),
+          });
+          if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
+          return writeJsonResult(writePreviewEnvelope(
+            "complete_task", proposal, await makeWritePreviewToken("complete_task", proposal),
+          ));
+        }
+        if (!preview_token) throw new Error("preview_token is required when confirm_write is true.");
+        await consumeWritePreviewToken(preview_token, "complete_task", proposal);
+        const preWriteAuditOk = await appendAuditLog({
+          tool: "complete_task", action: "update", confirmation_state: "confirmed",
+          args: { confirm_write: true, task_id }, outcome: "attempt",
+          ...(current.matter?.id && { matter_id: current.matter.id }),
+        });
+        if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
+        writeAttempted = true;
+        const data = await clioPatch(`/tasks/${task_id}.json`, { data: { status: STATUS_MAP["Complete"] } }, { "If-Match": current.etag });
         const task = data.data;
 
         await appendAuditLog({
           tool: "complete_task",
-          args: { task_id },
+          action: "update", confirmation_state: "confirmed", args: { confirm_write: true, task_id },
           outcome: "success",
           ...(task.matter?.id && { matter_id: task.matter.id }),
         });
@@ -241,13 +350,15 @@ export function registerTaskTools(server: McpServer): void {
           }],
         };
       } catch (err: any) {
+        const message = safeWriteError(err);
         await appendAuditLog({
           tool: "complete_task",
-          args: { task_id },
+          action: "update", confirmation_state: confirm_write ? "confirmed" : "dry_run",
+          args: { confirm_write, task_id },
           outcome: "error",
-          error_message: err.message,
+          error_message: message,
         });
-        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        return writeJsonResult({ error: message, write_performed: writeAttempted ? "unknown" : false }, true);
       }
     }
   );
