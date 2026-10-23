@@ -41,6 +41,9 @@
   ],
   "author": "Oktopeak <office@oktopeak.com> (https://oktopeak.com)",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "type": "module",
   "bugs": {
     "url": "https://github.com/oktopeak/clio-mcp/issues"

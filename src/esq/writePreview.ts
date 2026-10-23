@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "crypto";
-import { loadTokens } from "../auth/tokenStorage.js";
+import { getEncryptionKey, loadTokens } from "../auth/tokenStorage.js";
 import { getSessionContext } from "../utils/sessionContext.js";
 import { ClioApiError, getClioBaseUrl } from "../utils/clioClient.js";
 
@@ -39,12 +39,11 @@ export function safeWriteError(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
-function previewSecret(): Buffer {
+async function previewSecret(): Promise<Buffer> {
   const value = process.env.ENCRYPTION_KEY?.trim();
-  if (!value || value.length < 32) {
-    throw new Error("Server configuration error: ENCRYPTION_KEY is required for write-preview tokens.");
-  }
-  return createHmac("sha256", value).update("esq-clio-record-write-preview-v1").digest();
+  const key = value ? Buffer.from(value, "hex") : await getEncryptionKey();
+  if (key.length !== 32) throw new Error("Server configuration error: a 32-byte encryption key is required.");
+  return createHmac("sha256", key).update("esq-clio-record-write-preview-v1").digest();
 }
 
 function fingerprint(value: unknown): string {
@@ -62,7 +61,7 @@ export async function makeWritePreviewToken(action: string, proposal: unknown, n
     process_id: processId,
   };
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
-  const signature = createHmac("sha256", previewSecret()).update(payload).digest("base64url");
+  const signature = createHmac("sha256", await previewSecret()).update(payload).digest("base64url");
   return `${payload}.${signature}`;
 }
 
@@ -74,7 +73,7 @@ export async function consumeWritePreviewToken(
 ): Promise<void> {
   const [payload, suppliedSignature, extra] = token.split(".");
   if (!payload || !suppliedSignature || extra !== undefined) throw new Error("Invalid preview token.");
-  const expectedSignature = createHmac("sha256", previewSecret()).update(payload).digest("base64url");
+  const expectedSignature = createHmac("sha256", await previewSecret()).update(payload).digest("base64url");
   const supplied = Buffer.from(suppliedSignature);
   const expected = Buffer.from(expectedSignature);
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {

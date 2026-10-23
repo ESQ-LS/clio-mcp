@@ -23,7 +23,7 @@ const MATTER_DETAIL_FIELDS =
   "id,etag,display_number,description,status,client{id,name},practice_area{id,name},open_date,close_date,billable," +
   "pending_date,responsible_attorney{id,name},originating_attorney{id,name},responsible_staff{id,name}," +
   "matter_stage{id,name},group{id,name},location,client_reference,updated_at," +
-  "relationships{id,description,contact{id,name}},custom_field_values{id,field_name,field_type,value,custom_field{id}}," +
+  "relationships{id,description,contact},custom_field_values{id,field_name,field_type,value,custom_field}," +
   "statute_of_limitations{status,due_at}";
 
 const matterStatusSchema = z.enum(["open", "pending", "closed"]);
@@ -151,6 +151,7 @@ async function resolveMatterReferences(input: Record<string, unknown>, currentMa
   }
   if (input.relationships !== undefined) {
     const validated = [];
+    const contacts = new Map<number, any>();
     for (const relationship of input.relationships as Array<{ id?: number; contact_id: number; description: string }>) {
       if (relationship.id !== undefined) {
         if (!currentMatter) {
@@ -165,7 +166,11 @@ async function resolveMatterReferences(input: Record<string, unknown>, currentMa
           throw new Error("The selected relationship does not belong to the supplied contact.");
         }
       }
-      const response = await clioGet(`/contacts/${relationship.contact_id}.json`, { fields: "id,name,type" });
+      let response = contacts.get(relationship.contact_id);
+      if (!response) {
+        response = await clioGet(`/contacts/${relationship.contact_id}.json`, { fields: "id,name,type" });
+        contacts.set(relationship.contact_id, response);
+      }
       if (response?.data?.id !== relationship.contact_id) throw new Error(`Related contact ${relationship.contact_id} validation failed.`);
       validated.push({
         ...(relationship.id !== undefined && { id: relationship.id }),

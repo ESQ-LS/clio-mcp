@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { applyWriteGate } from "../writeGate.js";
 
-function registeredWith(writeTools: string): string[] {
+function registeredWith(writeTools: string, transport = "stdio", apiKey?: string): string[] {
   process.env.ESQ_WRITE_TOOLS = writeTools;
+  process.env.TRANSPORT = transport;
+  if (apiKey) process.env.MCP_API_KEY = apiKey;
+  else delete process.env.MCP_API_KEY;
   const names: string[] = [];
   const server = {
     registerTool: (name: string) => { names.push(name); },
@@ -22,7 +25,11 @@ function registeredWith(writeTools: string): string[] {
   return names;
 }
 
-afterEach(() => { delete process.env.ESQ_WRITE_TOOLS; });
+afterEach(() => {
+  delete process.env.ESQ_WRITE_TOOLS;
+  delete process.env.TRANSPORT;
+  delete process.env.MCP_API_KEY;
+});
 
 describe("ESQ controlled time-entry write gate", () => {
   it("withholds every write tool by default", () => {
@@ -51,6 +58,16 @@ describe("ESQ controlled time-entry write gate", () => {
     expect(registeredWith("upload_document")).toEqual([
       "list_time_entries",
       "upload_document",
+    ]);
+  });
+
+  it("fails closed for HTTP writes without an MCP API key", () => {
+    expect(registeredWith("create_contact,update_matter", "http")).toEqual(["list_time_entries"]);
+  });
+
+  it("permits allowlisted HTTP writes when MCP authentication is configured", () => {
+    expect(registeredWith("create_contact,update_matter", "http", "synthetic-api-key")).toEqual([
+      "list_time_entries", "create_contact", "update_matter",
     ]);
   });
 });

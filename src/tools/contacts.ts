@@ -127,6 +127,24 @@ function buildContactData(input: Record<string, unknown>): Record<string, unknow
   return data;
 }
 
+function assertNoConflictingContactAliases(input: Record<string, unknown>): void {
+  const conflicts = [
+    [input.email, input.email_addresses, "email and email_addresses"],
+    [input.phone, input.phone_numbers, "phone and phone_numbers"],
+    [input.web_site, input.web_sites, "web_site and web_sites"],
+    [
+      [input.street, input.city, input.province, input.postal_code, input.country].some((value) => value !== undefined),
+      input.addresses,
+      "singular address fields and addresses",
+    ],
+  ] as const;
+  for (const [singular, plural, label] of conflicts) {
+    if (singular !== undefined && singular !== false && plural !== undefined) {
+      throw new Error(`Supply either ${label}, not both.`);
+    }
+  }
+}
+
 function existingEntry(entries: any[], kind: string, preferDefault = false, entryId?: number): any | undefined {
   if (!Array.isArray(entries)) throw new Error(`Malformed contact ${kind} response.`);
   if (entryId !== undefined) {
@@ -404,10 +422,12 @@ export function registerContactTools(server: McpServer): void {
     async (input) => {
       const confirmationState = input.confirm_write ? "confirmed" : "dry_run";
       let writeAttempted = false;
-      const fieldsChanged = Object.keys(buildContactData(input));
+      let fieldsChanged: string[] = [];
       try {
+        assertNoConflictingContactAliases(input);
         const company = await validateContactCompany(input.company_id);
         const data = buildContactData(input);
+        fieldsChanged = Object.keys(data);
         const proposal = { ...data, ...(company && { company }) };
 
         if (!input.confirm_write) {
@@ -483,8 +503,11 @@ export function registerContactTools(server: McpServer): void {
     async (input) => {
       const confirmationState = input.confirm_write ? "confirmed" : "dry_run";
       let writeAttempted = false;
-      const fieldsChanged = Object.keys(buildContactData(input));
+      let fieldsChanged: string[] = [];
       try {
+        assertNoConflictingContactAliases(input);
+        const preliminaryData = buildContactData(input);
+        fieldsChanged = Object.keys(preliminaryData);
         if (fieldsChanged.length === 0) throw new Error("At least one contact field must be supplied.");
         if ((input.email_id !== undefined && input.email === undefined) ||
             (input.phone_id !== undefined && input.phone === undefined) ||

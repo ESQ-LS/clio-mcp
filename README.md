@@ -186,7 +186,7 @@ The connector retrieves live data from Clio on every request. Nothing is cached 
 
 Before you begin, make sure you have:
 
-- **Node.js 18 or later** — [nodejs.org/en/download](https://nodejs.org/en/download)
+- **Node.js 22.12 or later** — [nodejs.org/en/download](https://nodejs.org/en/download)
 - **Claude Desktop** — [claude.ai/download](https://claude.ai/download)
 - **A Clio account** with permission to create developer applications (ask your Clio administrator if you are unsure)
 
@@ -471,7 +471,7 @@ All settings are passed as environment variables (in your Claude Desktop config 
 | `TRANSPORT` | No | `http` | `stdio` or `http`. Defaults to `http` at v2.0.0; set to `stdio` for the pre-v2 behavior |
 | `MCP_BASE_URL` | HTTP mode | — | Public base URL of this server (e.g. `http://127.0.0.1:3000`). Used for the OAuth redirect |
 | `PORT` | No | `3000` | HTTP listen port (HTTP mode only) |
-| `MCP_API_KEY` | No | — | If set, the HTTP server requires this bearer token in the `Authorization` header. Recommended for any non-localhost deployment |
+| `MCP_API_KEY` | Write-enabled HTTP mode | — | Bearer token required before any `ESQ_WRITE_TOOLS` are exposed over HTTP. Read-only HTTP deployments may omit it. |
 | `ENCRYPTION_KEY` | No | auto-generated | Overrides OS keychain. Required only for CI/headless installs where no keychain is available. Must be a 64-character hex string. |
 | `CLIO_REDIRECT_PORT` | No | `5678` | Local port for the OAuth callback (stdio mode). Change if 5678 is in use on your machine |
 | `CLIO_REGION` | No | `us` | `us`, `ca`, `eu`, or `au`. Controls the default Clio API and auth base URLs |

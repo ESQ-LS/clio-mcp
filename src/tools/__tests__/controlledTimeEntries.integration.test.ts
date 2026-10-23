@@ -5,11 +5,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { applyWriteGate } from "../../esq/writeGate.js";
 import { registerControlledTimeEntryTools } from "../controlledTimeEntries.js";
 
-afterEach(() => { delete process.env.ESQ_WRITE_TOOLS; });
+afterEach(() => {
+  delete process.env.ESQ_WRITE_TOOLS;
+  delete process.env.TRANSPORT;
+});
 
 describe("controlled time-entry MCP schema integration", () => {
   it("publishes only the allowlisted create/update schemas with confirmation controls", async () => {
     process.env.ESQ_WRITE_TOOLS = "create_time_entry,update_time_entry";
+    process.env.TRANSPORT = "stdio";
     const server = new McpServer({ name: "synthetic-clio-mcp", version: "test" });
     applyWriteGate(server);
     registerControlledTimeEntryTools(server);

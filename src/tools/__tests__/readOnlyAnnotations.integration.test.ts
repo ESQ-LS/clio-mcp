@@ -69,6 +69,7 @@ const NONDESTRUCTIVE_UPDATE_TOOLS = [
 
 afterEach(() => {
   delete process.env.ESQ_WRITE_TOOLS;
+  delete process.env.TRANSPORT;
 });
 
 function registerAllTools(server: McpServer): void {
@@ -91,6 +92,7 @@ async function discoverTools(productionGate: boolean, enabledWrites = "create_ti
   const server = new McpServer({ name: "synthetic-clio-mcp", version: "test" });
   if (productionGate) {
     process.env.ESQ_WRITE_TOOLS = enabledWrites;
+    process.env.TRANSPORT = "stdio";
     applyWriteGate(server);
   }
   registerAllTools(server);

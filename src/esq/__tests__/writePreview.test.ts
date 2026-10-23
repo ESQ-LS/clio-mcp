@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { loadTokens, getSessionContext, getClioBaseUrl } = vi.hoisted(() => ({
+const { getEncryptionKey, loadTokens, getSessionContext, getClioBaseUrl } = vi.hoisted(() => ({
+  getEncryptionKey: vi.fn(),
   loadTokens: vi.fn(),
   getSessionContext: vi.fn(),
   getClioBaseUrl: vi.fn(),
 }));
-vi.mock("../../auth/tokenStorage.js", () => ({ loadTokens }));
+vi.mock("../../auth/tokenStorage.js", () => ({ getEncryptionKey, loadTokens }));
 vi.mock("../../utils/sessionContext.js", () => ({ getSessionContext }));
 vi.mock("../../utils/clioClient.js", () => ({ getClioBaseUrl }));
 
@@ -13,6 +14,7 @@ import { makeWritePreviewToken, consumeWritePreviewToken } from "../writePreview
 
 beforeEach(() => {
   vi.stubEnv("ENCRYPTION_KEY", "1".repeat(64));
+  getEncryptionKey.mockResolvedValue(Buffer.from("2".repeat(64), "hex"));
   loadTokens.mockResolvedValue({ clio_user_id: "100", expires_at: Date.now() + 3600000 });
   getSessionContext.mockReturnValue(undefined);
   getClioBaseUrl.mockReturnValue("https://ca.app.clio.com/api/v4");
@@ -26,6 +28,13 @@ describe("intake write preview tokens", () => {
     const token = await makeWritePreviewToken("create_contact", proposal);
     await expect(consumeWritePreviewToken(token, "create_contact", proposal)).resolves.toBeUndefined();
     await expect(consumeWritePreviewToken(token, "create_contact", proposal)).rejects.toThrow("already been used");
+  });
+
+  it("uses the configured key store when the environment override is absent", async () => {
+    vi.stubEnv("ENCRYPTION_KEY", "");
+    const token = await makeWritePreviewToken("create_contact", proposal);
+    await expect(consumeWritePreviewToken(token, "create_contact", proposal)).resolves.toBeUndefined();
+    expect(getEncryptionKey).toHaveBeenCalled();
   });
 
   it("rejects another user and another API region", async () => {

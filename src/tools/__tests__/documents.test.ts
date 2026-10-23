@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
+import { constants } from "fs";
 
 const { mockClioGet, mockClioPost, mockClioPut, mockClioPatch, mockAppendAuditLog } = vi.hoisted(() => ({
   mockClioGet: vi.fn(), mockClioPost: vi.fn(), mockClioPut: vi.fn(), mockClioPatch: vi.fn(),
@@ -45,6 +46,21 @@ describe("controlled document upload", () => {
     expect(audit).not.toContain(filePath);
     expect(audit).not.toContain("synthetic.txt");
     expect(audit).not.toContain(preview.proposal.document.sha256);
+  });
+
+  it("opens the approved source with no-follow semantics", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "synthetic document\n");
+    const openSpy = vi.spyOn(fs, "open");
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    await handlers.upload_document({ file_path: filePath, matter_id: 99 });
+    const realFilePath = await fs.realpath(filePath);
+    const sourceOpen = openSpy.mock.calls.find(([candidate, flags]) =>
+      candidate === realFilePath && typeof flags === "number");
+    expect(sourceOpen).toBeDefined();
+    expect((sourceOpen![1] as number) & constants.O_NOFOLLOW).toBe(constants.O_NOFOLLOW);
+    openSpy.mockRestore();
   });
 
   it("rejects files outside the approved root and symbolic links", async () => {

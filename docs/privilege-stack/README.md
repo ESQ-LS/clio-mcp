@@ -30,7 +30,7 @@ The only network traffic during a session is between the connector and `app.clio
 ## Prerequisites
 
 - **A Mac Studio with 128 GB unified memory** (M4 Max recommended) **OR** a Linux box with an NVIDIA GPU with 32 GB+ VRAM (RTX 5090). A 70B model at 4-bit quantization needs ~40-45 GB working memory.
-- **Node.js 18 or later** for our connector.
+- **Node.js 22.12 or later** for our connector.
 - **A Clio account** with permission to create developer applications.
 - **macOS, Windows, or Linux.** All three work.
 

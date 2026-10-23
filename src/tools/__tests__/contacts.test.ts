@@ -168,6 +168,31 @@ describe("controlled contact writes", () => {
     }) });
   });
 
+  it("rejects conflicting singular and plural contact aliases", async () => {
+    const handlers = getHandlers();
+    const result = await handlers.create_contact({
+      type: "Person", name: "Synthetic Person", email: "one@example.test",
+      email_addresses: [{ name: "Work", address: "two@example.test" }],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("not both");
+    expect(mockClioPost).not.toHaveBeenCalled();
+    expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({ outcome: "error" }));
+  });
+
+  it("audits custom-field proposal errors raised during construction", async () => {
+    const result = await getHandlers().create_contact({
+      type: "Company", name: "Synthetic Company",
+      custom_field_values: [
+        { custom_field_id: 7001, value: "A" },
+        { custom_field_id: 7001, value: "B" },
+      ],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("only once");
+    expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({ outcome: "error" }));
+  });
+
   it("previews and confirms an update against the current contact version", async () => {
     const current = {
       data: { id: 42, etag: "contact-v1", name: "Synthetic Co", type: "Company", updated_at: "2026-10-14T12:00:00Z" },

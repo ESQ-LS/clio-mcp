@@ -78,6 +78,16 @@ describe("controlled matter writes", () => {
     await handlers.list_matters({ limit: 25 });
     expect(mockClioGet.mock.calls[0][1].fields).toContain("pending_date");
   });
+
+  it("does not request unsupported second-level field expansions", async () => {
+    mockClioGet.mockResolvedValue({ data: MATTER });
+    await handlers.get_matter({ matter_id: 42 });
+    const fields = mockClioGet.mock.calls[0][1].fields as string;
+    expect(fields).toContain("relationships{id,description,contact}");
+    expect(fields).toContain("custom_field_values{id,field_name,field_type,value,custom_field}");
+    expect(fields).not.toContain("contact{id,name}");
+    expect(fields).not.toContain("custom_field{id}");
+  });
   it("defaults a pending intake to pending_date without inventing open_date", async () => {
     const args = {
       client_id: 1,
@@ -161,6 +171,22 @@ describe("controlled matter writes", () => {
       custom_field_values: [{ custom_field: { id: 8001 }, value: "SYN-MATTER" }],
       relationships: [{ contact: { id: 2 }, description: "Primary contact" }],
     }) });
+  });
+
+  it("deduplicates repeated relationship contact validation lookups", async () => {
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath === "/contacts/1.json") return CLIENT;
+      if (requestPath === "/contacts/2.json") return { data: { id: 2, name: "Synthetic Related", type: "Person" } };
+      throw new Error(`unexpected path ${requestPath}`);
+    });
+    await handlers.create_matter({
+      ...CREATE_ARGS,
+      relationships: [
+        { contact_id: 2, description: "Primary contact" },
+        { contact_id: 2, description: "Billing contact" },
+      ],
+    });
+    expect(mockClioGet.mock.calls.filter(([requestPath]) => requestPath === "/contacts/2.json")).toHaveLength(1);
   });
 
   it("previews and confirms an update against the current matter version", async () => {

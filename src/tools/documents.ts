@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import fs from "fs/promises";
-import { createReadStream } from "fs";
+import { constants, createReadStream, createWriteStream } from "fs";
+import { pipeline } from "stream/promises";
 import path from "path";
 import os from "os";
 import crypto from "crypto";
@@ -87,13 +88,17 @@ async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSna
   if (!relative || relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
     throw new Error("file_path is outside the approved upload root.");
   }
-  const sourceStats = await fs.stat(approvedFile);
-  if (!sourceStats.isFile()) throw new Error("file_path must identify a regular file.");
-
   const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), "esq-clio-upload-"));
   const snapshotPath = path.join(snapshotDir, "payload");
+  let sourceHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
-    await fs.copyFile(approvedFile, snapshotPath);
+    sourceHandle = await fs.open(approvedFile, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const sourceStats = await sourceHandle.stat();
+    if (!sourceStats.isFile()) throw new Error("file_path must identify a regular file.");
+    await pipeline(
+      sourceHandle.createReadStream({ autoClose: false }),
+      createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }),
+    );
     const snapshotStats = await fs.stat(snapshotPath);
     const sha256 = await fileSha256(snapshotPath);
     return {
@@ -105,6 +110,8 @@ async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSna
   } catch (error) {
     await fs.rm(snapshotDir, { recursive: true, force: true });
     throw error;
+  } finally {
+    await sourceHandle?.close();
   }
 }
 
