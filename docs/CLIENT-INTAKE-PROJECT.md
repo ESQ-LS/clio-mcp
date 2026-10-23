@@ -54,7 +54,7 @@ protect against edits that race with the write. Tokens are specific to a Clio
 user, API region, and server process; after a restart or replica change, preview again.
 No live Clio records are required to complete step 1.
 
-Expanded-branch validation: 19 test files / 132 tests passed; the production
+Expanded-branch validation: 19 test files / 134 tests passed; the production
 TypeScript build, full dependency audit (zero vulnerabilities), and
 `git diff --check` passed. Tests use synthetic records and mocked API calls.
 Next action: review the superseding pull request; do not merge or deploy without

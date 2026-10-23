@@ -14,6 +14,7 @@ import {
   CLIO_READ_ONLY_TOOL_ANNOTATIONS,
   CLIO_UPDATE_TOOL_ANNOTATIONS,
 } from "./annotations.js";
+import { buildNewCustomFieldValues, buildUpdatedCustomFieldValues } from "../esq/customFieldValues.js";
 
 const CONTACT_LIST_FIELDS =
   "id,name,email_addresses{address,name},phone_numbers{number,name},company{id,name},type";
@@ -118,9 +119,7 @@ function buildContactData(input: Record<string, unknown>): Record<string, unknow
     data.web_sites = [{ name: "Work", address: input.web_site, default_web_site: true }];
   }
   if (input.custom_field_values !== undefined) {
-    data.custom_field_values = (input.custom_field_values as Array<{ custom_field_id: number; value: unknown }>).map(
-      ({ custom_field_id, value }) => ({ custom_field: { id: custom_field_id }, value: String(value) }),
-    );
+    data.custom_field_values = buildNewCustomFieldValues(input.custom_field_values);
   }
   for (const key of ["email_addresses", "phone_numbers", "addresses", "web_sites"] as const) {
     if (input[key] !== undefined) data[key] = input[key];
@@ -150,6 +149,12 @@ function existingEntry(entries: any[], kind: string, preferDefault = false, entr
 
 function buildContactUpdateData(input: Record<string, unknown>, current: any): Record<string, unknown> {
   const data = buildContactData(input);
+  if (input.custom_field_values !== undefined) {
+    data.custom_field_values = buildUpdatedCustomFieldValues(
+      input.custom_field_values,
+      current.custom_field_values,
+    );
+  }
   if (input.email !== undefined) {
     const entry = existingEntry(current.email_addresses ?? [], "email", true, input.email_id as number | undefined);
     data.email_addresses = [{

@@ -156,6 +156,26 @@ describe("controlled matter writes", () => {
     expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: { status: "open" } }, { "If-Match": "matter-v1" });
   });
 
+  it("updates an existing custom field by its composite value ID", async () => {
+    const current = {
+      ...MATTER,
+      custom_field_values: [{
+        id: "text_line-8001", field_name: "Internal code", field_type: "text_line",
+        value: "OLD", custom_field: { id: 8001 },
+      }],
+    };
+    mockClioGet.mockResolvedValue({ data: current });
+    const args = { matter_id: 42, custom_field_values: [{ custom_field_id: 8001, value: "NEW" }] };
+    const preview = JSON.parse((await handlers.update_matter(args)).content[0].text);
+    expect(preview.proposal.changes.custom_field_values).toEqual([
+      { id: "text_line-8001", value: "NEW" },
+    ]);
+    await handlers.update_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: {
+      custom_field_values: [{ id: "text_line-8001", value: "NEW" }],
+    } }, { "If-Match": "matter-v1" });
+  });
+
   it("fails closed when audit persistence fails", async () => {
     mockAppendAuditLog.mockResolvedValue(false);
     const result = await handlers.create_matter(CREATE_ARGS);

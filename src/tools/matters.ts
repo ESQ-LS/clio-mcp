@@ -14,6 +14,7 @@ import {
   CLIO_READ_ONLY_TOOL_ANNOTATIONS,
   CLIO_UPDATE_TOOL_ANNOTATIONS,
 } from "./annotations.js";
+import { buildNewCustomFieldValues, buildUpdatedCustomFieldValues } from "../esq/customFieldValues.js";
 
 const MATTER_LIST_FIELDS =
   "id,display_number,description,status,client{id,name},practice_area{id,name},open_date,close_date";
@@ -79,9 +80,7 @@ function buildMatterData(input: Record<string, unknown>): Record<string, unknown
     if (input[inputKey] !== undefined) data[apiKey] = { id: input[inputKey] };
   }
   if (input.custom_field_values !== undefined) {
-    data.custom_field_values = (input.custom_field_values as Array<{ custom_field_id: number; value: unknown }>).map(
-      ({ custom_field_id, value }) => ({ custom_field: { id: custom_field_id }, value: String(value) }),
-    );
+    data.custom_field_values = buildNewCustomFieldValues(input.custom_field_values);
   }
   if (input.statute_of_limitations_due_at !== undefined || input.statute_of_limitations_status !== undefined) {
     data.statute_of_limitations = {
@@ -92,6 +91,17 @@ function buildMatterData(input: Record<string, unknown>): Record<string, unknown
   if (input.relationships !== undefined) {
     data.relationships = (input.relationships as Array<{ id?: number; contact_id: number; description: string }>).map(
       ({ id, contact_id, description }) => ({ ...(id !== undefined && { id }), contact: { id: contact_id }, description }),
+    );
+  }
+  return data;
+}
+
+function buildMatterUpdateData(input: Record<string, unknown>, current: any): Record<string, unknown> {
+  const data = buildMatterData(input);
+  if (input.custom_field_values !== undefined) {
+    data.custom_field_values = buildUpdatedCustomFieldValues(
+      input.custom_field_values,
+      current.custom_field_values,
     );
   }
   return data;
@@ -374,7 +384,7 @@ export function registerMatterTools(server: McpServer): void {
     async (input) => {
       const confirmationState = input.confirm_write ? "confirmed" : "dry_run";
       let writeAttempted = false;
-      const data = buildMatterData(input);
+      let data = buildMatterData(input);
       const fieldsChanged = Object.keys(data);
       try {
         if (fieldsChanged.length === 0) throw new Error("At least one matter field must be supplied.");
@@ -386,6 +396,7 @@ export function registerMatterTools(server: McpServer): void {
         if (typeof current.etag !== "string" || !current.etag.trim()) {
           throw new Error("Clio did not return a matter ETag; no update can be performed safely.");
         }
+        data = buildMatterUpdateData(input, current);
         const references = await resolveMatterReferences(input);
         const proposal = {
           record_id: input.matter_id,

@@ -195,6 +195,28 @@ describe("controlled contact writes", () => {
     } }, { "If-Match": "contact-v1" });
   });
 
+  it("updates an existing custom field by its composite value ID", async () => {
+    const current = { data: {
+      id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",
+      custom_field_values: [{
+        id: "text_line-7001", field_name: "Registry number", field_type: "text_line",
+        value: "OLD", custom_field: { id: 7001 },
+      }],
+    } };
+    mockClioGet.mockResolvedValue(current);
+    mockClioPatch.mockResolvedValue({ data: { id: 42 } });
+    const handlers = getHandlers();
+    const args = { contact_id: 42, custom_field_values: [{ custom_field_id: 7001, value: "NEW" }] };
+    const preview = JSON.parse((await handlers.update_contact(args)).content[0].text);
+    expect(preview.proposal.changes.custom_field_values).toEqual([
+      { id: "text_line-7001", value: "NEW" },
+    ]);
+    await handlers.update_contact({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPatch).toHaveBeenCalledWith("/contacts/42.json", { data: {
+      custom_field_values: [{ id: "text_line-7001", value: "NEW" }],
+    } }, { "If-Match": "contact-v1" });
+  });
+
   it("rejects ambiguous entries unless an exact entry ID is supplied", async () => {
     mockClioGet.mockResolvedValue({ data: {
       id: 42, etag: "v1", phone_numbers: [
