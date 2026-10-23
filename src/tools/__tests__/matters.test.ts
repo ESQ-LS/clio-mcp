@@ -68,6 +68,19 @@ beforeEach(() => {
 });
 
 describe("controlled matter writes", () => {
+  it("defaults a pending intake to pending_date without inventing open_date", async () => {
+    const args = {
+      client_id: 1,
+      description: "Synthetic pending intake",
+      status: "pending" as const,
+      billable: true,
+      confirm_write: false,
+    };
+    const preview = JSON.parse((await handlers.create_matter(args)).content[0].text);
+    expect(preview.proposal.pending_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(preview.proposal).not.toHaveProperty("open_date");
+  });
+
   it("previews a pending matter without writing and confirms the unchanged proposal", async () => {
     const previewResult = await handlers.create_matter(CREATE_ARGS);
     const preview = JSON.parse(previewResult.content[0].text);

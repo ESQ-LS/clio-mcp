@@ -300,6 +300,7 @@ export function registerMatterTools(server: McpServer): void {
         status: matterStatusSchema.default("pending").describe("Initial status; defaults to pending for intake"),
         open_date: matterFieldsSchema.open_date,
         pending_date: matterFieldsSchema.pending_date,
+        close_date: matterFieldsSchema.close_date,
         billable: z.boolean().default(true),
         responsible_attorney_id: matterFieldsSchema.responsible_attorney_id,
         originating_attorney_id: matterFieldsSchema.originating_attorney_id,
@@ -323,7 +324,12 @@ export function registerMatterTools(server: McpServer): void {
       const confirmationState = input.confirm_write ? "confirmed" : "dry_run";
       let writeAttempted = false;
       const today = new Date().toISOString().slice(0, 10);
-      const normalized = { ...input, open_date: input.open_date ?? today };
+      const normalized = {
+        ...input,
+        ...(input.status === "open" && input.open_date === undefined && { open_date: today }),
+        ...(input.status === "pending" && input.pending_date === undefined && { pending_date: today }),
+        ...(input.status === "closed" && input.close_date === undefined && { close_date: today }),
+      };
       const data = buildMatterData(normalized);
       const fieldsChanged = Object.keys(data);
       try {
