@@ -207,7 +207,7 @@ Release gates:
   legacy broad activity handlers.
 - [x] Commit and push the superseding pull request under separate authorization.
 - [ ] Complete pull-request code and security review against the current head.
-- [ ] Current Azure target, image, revision, and rollback image are re-read.
+- [x] Current Azure target, image, revision, and rollback image are re-read.
 - [ ] Current Clio developer-app permissions are verified for every selected
   resource before enabling the allowlist.
 - [ ] Merge and production deployment receive separate authorization.
@@ -216,6 +216,19 @@ Release gates:
 - [ ] Acceptance uses labelled synthetic/test records and dry runs before any
   confirmed live-record mutation.
 
-Rollback: restore the recorded pre-deploy immutable image and the existing
-`ESQ_WRITE_TOOLS=create_time_entry,update_time_entry` value. Do not delete Azure
-resources or alter the Clio developer application during rollback.
+### Current production and rollback baseline — 2026-10-23
+
+- Subscription: `Azure subscription 1`
+  (`acc8e362-27d4-45ae-9761-9b274e80e649`), enabled.
+- Container App: `ca-esq-clio-mcp` in `rg-esq-pathb-mcp`, Canada Central.
+- Active and latest-ready revision: `ca-esq-clio-mcp--0000010`, healthy and
+  provisioned with 100% traffic.
+- Immutable current/rollback image:
+  `esqdocxmcpacr.azurecr.io/esq-clio-mcp:14403db73309ac12dfdac7c3f0c20970bd97c05e`.
+- Current write allowlist:
+  `ESQ_WRITE_TOOLS=create_time_entry,update_time_entry`.
+- Read-back was query-only; no Azure configuration, traffic, image, identity,
+  role, secret, or environment value was changed.
+
+Rollback: restore the immutable image and exact write allowlist above. Do not
+delete Azure resources or alter the Clio developer application during rollback.
