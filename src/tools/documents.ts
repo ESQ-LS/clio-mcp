@@ -1,10 +1,18 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import z from "zod";
 import fs from "fs/promises";
+import { createReadStream } from "fs";
 import path from "path";
 import crypto from "crypto";
 import { clioGet, clioPost, clioPut, clioPatch, getClioBaseUrl, ClioApiError, extractNextPageToken } from "../utils/clioClient.js";
 import { appendAuditLog } from "../utils/auditLog.js";
+import {
+  consumeWritePreviewToken,
+  makeWritePreviewToken,
+  safeWriteError,
+  writeJsonResult,
+  writePreviewEnvelope,
+} from "../esq/writePreview.js";
 import { CLIO_CREATE_TOOL_ANNOTATIONS, CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
 const DOCUMENT_LIST_FIELDS = "id,name,content_type,size,created_at,matter{id,display_number}";
@@ -41,6 +49,17 @@ async function partMd5(filePath: string, start: number, length: number): Promise
     await fh.close();
   }
   return crypto.createHash("md5").update(buf).digest("base64");
+}
+
+async function fileSha256(filePath: string): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", resolve);
+  });
+  return hash.digest("hex");
 }
 
 async function putPartToS3(
@@ -185,24 +204,65 @@ export function registerDocumentTools(server: McpServer): void {
   server.registerTool(
     "upload_document",
     {
-      description: "Upload a local file to a Clio matter as a document",
+      title: "Upload a controlled document to a Clio matter",
+      description: "Dry-run by default. Verifies the exact local file and target matter, then displays filename, size, type, and SHA-256. A production upload requires confirm_write: true plus the unexpired preview_token from an unchanged proposal.",
       inputSchema: {
         file_path: z.string().describe("Absolute path to the local file to upload"),
         matter_id: z.number().int().positive().describe("Clio matter ID to attach the document to"),
         name: z.string().optional().describe("Document name in Clio; defaults to the file's basename"),
         content_type: z.string().optional().describe("MIME type; auto-detected from extension if omitted"),
+        confirm_write: z.boolean().default(false),
+        preview_token: z.string().optional(),
       },
       annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
-    async ({ file_path, matter_id, name, content_type }) => {
+    async ({ file_path, matter_id, name, content_type, confirm_write, preview_token }) => {
+      let writeAttempted = false;
       try {
         const stats = await fs.stat(file_path);
+        if (!stats.isFile()) throw new Error("file_path must identify a regular file.");
         const totalSize = stats.size;
         const originalExt = path.extname(file_path);
         const docName = name
           ? (path.extname(name) ? name : name + originalExt)
           : path.basename(file_path);
         const mime = content_type ?? guessMime(docName);
+        const sha256 = await fileSha256(file_path);
+        const matterResponse = await clioGet(`/matters/${matter_id}.json`, {
+          fields: "id,display_number,description,status",
+        });
+        if (matterResponse?.data?.id !== matter_id) throw new Error("Matter validation failed.");
+        const proposal = {
+          matter: {
+            id: matter_id,
+            display_number: matterResponse.data.display_number,
+            description: matterResponse.data.description,
+            status: matterResponse.data.status,
+          },
+          document: { name: docName, content_type: mime, size: totalSize, sha256 },
+        };
+
+        if (!confirm_write) {
+          const auditOk = await appendAuditLog({
+            tool: "upload_document", action: "create", confirmation_state: "dry_run",
+            outcome: "success", matter_id,
+            args: { confirm_write: false, name: docName, size: totalSize, sha256 },
+          });
+          if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
+          return writeJsonResult(writePreviewEnvelope(
+            "upload_document", proposal, await makeWritePreviewToken("upload_document", proposal),
+          ));
+        }
+
+        if (!preview_token) throw new Error("preview_token is required when confirm_write is true.");
+        await consumeWritePreviewToken(preview_token, "upload_document", proposal);
+        const preWriteAuditOk = await appendAuditLog({
+          tool: "upload_document", action: "create", confirmation_state: "confirmed",
+          outcome: "success", matter_id,
+          args: { confirm_write: true, name: docName, size: totalSize, sha256 },
+        });
+        if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio upload was attempted.");
+        writeAttempted = true;
 
         type PartDescriptor = { part_number: number; content_length: number; content_md5: string; offset: number };
         const allParts: PartDescriptor[] = [];
@@ -270,7 +330,9 @@ export function registerDocumentTools(server: McpServer): void {
 
         await appendAuditLog({
           tool: "upload_document",
-          args: { file_path, matter_id, name: docName },
+          action: "create",
+          confirmation_state: "confirmed",
+          args: { confirm_write: true, matter_id, name: docName, size: totalSize, sha256 },
           outcome: "success",
           matter_id,
         });
@@ -282,14 +344,21 @@ export function registerDocumentTools(server: McpServer): void {
           }],
         };
       } catch (err: any) {
+        const message = safeWriteError(err);
         await appendAuditLog({
           tool: "upload_document",
-          args: { file_path, matter_id },
+          action: "create",
+          confirmation_state: confirm_write ? "confirmed" : "dry_run",
+          args: { confirm_write, matter_id, name },
           outcome: "error",
-          error_message: err.message,
+          error_message: message,
           matter_id,
         });
-        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        return writeJsonResult({
+          error: message,
+          write_performed: writeAttempted ? "unknown" : false,
+          ...(writeAttempted && { recovery: "Search the target Clio matter for the proposed document before retrying; the upload outcome may be ambiguous." }),
+        }, true);
       }
     }
   );

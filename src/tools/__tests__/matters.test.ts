@@ -108,6 +108,38 @@ describe("controlled matter writes", () => {
     expect(mockClioPost).not.toHaveBeenCalled();
   });
 
+  it("includes routine assignment, lifecycle, deadline, and custom fields", async () => {
+    mockClioGet.mockImplementation(async (path: string) => {
+      if (path === "/contacts/1.json") return CLIENT;
+      if (path === "/users/10.json") return { data: { id: 10, name: "Synthetic Staff", enabled: true } };
+      if (path === "/matter_stages/20.json") return { data: { id: 20, name: "Intake" } };
+      if (path === "/groups/30.json") return { data: { id: 30, name: "Firm" } };
+      if (path === "/contacts/2.json") return { data: { id: 2, name: "Synthetic Related", type: "Person" } };
+      throw new Error(`unexpected path ${path}`);
+    });
+    const args = {
+      ...CREATE_ARGS,
+      responsible_staff_id: 10,
+      matter_stage_id: 20,
+      group_id: 30,
+      location: "Toronto",
+      pending_date: "2026-10-14",
+      statute_of_limitations_due_at: "2027-10-14",
+      statute_of_limitations_status: "pending" as const,
+      custom_field_values: [{ custom_field_id: 8001, value: "SYN-MATTER" }],
+      relationships: [{ contact_id: 2, description: "Primary contact" }],
+    };
+    const preview = JSON.parse((await handlers.create_matter(args)).content[0].text);
+    await handlers.create_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPost).toHaveBeenCalledWith("/matters.json", { data: expect.objectContaining({
+      responsible_staff: { id: 10 }, matter_stage: { id: 20 }, group: { id: 30 },
+      location: "Toronto", pending_date: "2026-10-14",
+      statute_of_limitations: { due_at: "2027-10-14", status: "pending" },
+      custom_field_values: [{ custom_field: { id: 8001 }, value: "SYN-MATTER" }],
+      relationships: [{ contact: { id: 2 }, description: "Primary contact" }],
+    }) });
+  });
+
   it("previews and confirms an update against the current matter version", async () => {
     mockClioGet.mockResolvedValue({ data: MATTER });
     const args = { matter_id: 42, status: "open" as const, confirm_write: false };

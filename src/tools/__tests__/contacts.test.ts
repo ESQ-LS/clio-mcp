@@ -111,6 +111,49 @@ describe("controlled contact writes", () => {
     });
   });
 
+  it("includes ordinary profile and custom fields in an unchanged create", async () => {
+    mockClioGet.mockResolvedValue({ data: [] });
+    mockClioPost.mockResolvedValue({ data: { id: 44, name: "Synthetic Person", type: "Person" } });
+    const handlers = getHandlers();
+    const args = {
+      type: "Person", name: "Synthetic Person", prefix: "Ms.", middle_name: "Example",
+      date_of_birth: "1980-01-02", web_site: "https://example.test",
+      custom_field_values: [{ custom_field_id: 7001, value: "SYN-123" }],
+      confirm_write: false,
+    };
+    const preview = JSON.parse((await handlers.create_contact(args)).content[0].text);
+    await handlers.create_contact({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPost).toHaveBeenCalledWith("/contacts.json", { data: expect.objectContaining({
+      prefix: "Ms.", middle_name: "Example", date_of_birth: "1980-01-02",
+      web_sites: [{ name: "Work", address: "https://example.test", default_web_site: true }],
+      custom_field_values: [{ custom_field: { id: 7001 }, value: "SYN-123" }],
+    }) });
+  });
+
+  it("supports multiple non-destructive contact methods and addresses", async () => {
+    mockClioGet.mockResolvedValue({ data: [] });
+    mockClioPost.mockResolvedValue({ data: { id: 45, name: "Synthetic Person", type: "Person" } });
+    const handlers = getHandlers();
+    const args = {
+      type: "Person", name: "Synthetic Person",
+      email_addresses: [
+        { name: "Work", address: "work@example.test", default_email: true },
+        { name: "Home", address: "home@example.test" },
+      ],
+      phone_numbers: [{ name: "Mobile", number: "4165550100", default_number: true }],
+      addresses: [{ name: "Work", street: "1 Synthetic Street", city: "Toronto", country: "Canada" }],
+      web_sites: [{ name: "LinkedIn", address: "https://example.test/profile" }],
+    };
+    const preview = JSON.parse((await handlers.create_contact(args)).content[0].text);
+    await handlers.create_contact({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPost).toHaveBeenCalledWith("/contacts.json", { data: expect.objectContaining({
+      email_addresses: args.email_addresses,
+      phone_numbers: args.phone_numbers,
+      addresses: args.addresses,
+      web_sites: args.web_sites,
+    }) });
+  });
+
   it("previews and confirms an update against the current contact version", async () => {
     const current = {
       data: { id: 42, etag: "contact-v1", name: "Synthetic Co", type: "Company", updated_at: "2026-10-14T12:00:00Z" },

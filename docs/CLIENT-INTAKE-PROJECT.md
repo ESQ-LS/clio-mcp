@@ -1,18 +1,26 @@
 # ESQ AI client intake assistant
 
-Updated: October 14, 2026 (America/Toronto).
+Updated: October 23, 2026 (America/Toronto).
 
-Goal: automate prospective-client contacts and pending matters in Clio Manage,
-send the existing Microsoft Forms, match submissions to the correct matter,
-and prepare intake summaries and follow-up questions with SharePoint storage.
+Goal: support a solo-lawyer Clio workflow with efficient, preview-controlled
+routine writes while reserving destructive, financial, trust, permission, and
+bulk operations for Clio's native interface.
 
-Implementation: [PR #13](https://github.com/ESQ-LS/clio-mcp/pull/13).
+Initial implementation: [PR #13](https://github.com/ESQ-LS/clio-mcp/pull/13).
+The expanded solo-practice implementation is on
+`codex/solo-write-capabilities`; its superseding pull request is the next gate.
 GitHub Issues is disabled in this repository, so this file is the project tracker.
 
 ## Delivery checklist
 
 - [x] Inspect the connected Clio plugin and verify read access.
 - [x] Implement preview-controlled contact and matter creation/update tools.
+- [x] Expand ordinary contact and matter fields, including custom fields,
+  assignments, lifecycle dates, stages, groups, location, and limitation dates.
+- [x] Add preview controls to tasks, task completion, notes, communications,
+  calendar entries, and exact-file document uploads.
+- [x] Align document upload with the actual upstream path: Clio to the
+  Clio-managed OneDrive `/Clio` tree, then to SharePoint `Clio Mirror`.
 - [x] Step 1: harden and test before deployment.
   - [x] Request current ETags and send `If-Match` on contact and matter updates.
   - [x] Update existing nested email, phone, and address entries by ID; preserve
@@ -20,19 +28,23 @@ GitHub Issues is disabled in this repository, so this file is the project tracke
   - [x] Bind confirmation tokens to the authenticated Clio user and API region.
   - [x] Invalidate preview tokens after a server restart or on another replica.
   - [x] Complete regression tests and sync the hardening changes to GitHub.
-- [ ] Step 2: review and merge the PR, enable the four intake tools in
-  `ESQ_WRITE_TOOLS` while preserving existing billing tools, and redeploy Azure.
-- [ ] Step 3: refresh the plugin catalog and verify discovery and write authorization.
-- [ ] Step 4: test with labelled test contacts and a pending matter; verify creation,
+- [x] Step 2: complete focused and full regression coverage and review the
+  expanded branch.
+- [ ] Step 3: open or update a PR, merge only after approval, select exact tools
+  in `ESQ_WRITE_TOOLS`, and redeploy only with separate authorization.
+- [ ] Step 4: refresh the plugin catalog and verify discovery and write authorization.
+- [ ] Step 5: test with labelled test contacts and a pending matter; verify creation,
   updates, duplicates, expired/reused tokens, stale records, and audit entries.
-- [ ] Step 5: connect form invitations and responses using a unique intake reference
+- [ ] Step 6: connect form invitations and responses using a unique intake reference
   linking the Clio matter, form invitation, response, and SharePoint documents.
-- [ ] Step 6: evaluate an intake review dashboard after the workflow works end to end.
+- [ ] Step 7: evaluate an intake review dashboard after the workflow works end to end.
 
 ## Boundaries and release notes
 
 Source changes do not deploy the live plugin. Production write permissions and
-live Clio behavior still need verification. Contact custom fields remain read-only.
+live Clio behavior still need verification. Ordinary contact and matter custom
+field values are writable through the controlled create/update tools. Delete and
+nested `_destroy` operations remain unavailable.
 Form/email automation and the dashboard are future work. Client acceptance and
 conflict clearance remain lawyer decisions.
 
@@ -42,6 +54,8 @@ protect against edits that race with the write. Tokens are specific to a Clio
 user, API region, and server process; after a restart or replica change, preview again.
 No live Clio records are required to complete step 1.
 
-Step 1 validation: 17 test files / 130 tests passed; TypeScript build and
+Expanded-branch validation: 19 test files / 132 tests passed; the production
+TypeScript build, full dependency audit (zero vulnerabilities), and
 `git diff --check` passed. Tests use synthetic records and mocked API calls.
-Next action: review PR #13 for merge and deployment (step 2).
+Next action: review the superseding pull request; do not merge or deploy without
+separate authorization.

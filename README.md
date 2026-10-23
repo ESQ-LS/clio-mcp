@@ -52,7 +52,7 @@ ABA Opinion 512 (2023) requires attorneys using AI tools to understand how those
 
 - **No data retention by the connector.** The connector does not store matter data, client names, or any Clio content. It fetches from the API and passes results to Claude. The only thing persisted locally is your authentication token, and that is encrypted (see below).
 
-- **Scope limited to tasks, notes, and document uploads.** The connector can create tasks and notes on matters, and upload documents to matters. It cannot create, edit, or delete matters, contacts, calendar entries, or billing records. This is a deliberate v1 design choice — write access is limited to the operations most useful for AI-assisted legal work while minimising liability.
+- **Solo-practice write controls.** Routine contact, matter, task, note, communication, calendar, document, and time-entry writes can be enabled individually. Each production-capable ESQ write is dry-run first and requires an unchanged, short-lived confirmation token. Deletion, trust transfers, permission changes, and bulk mutation are not exposed.
 
 ### Token security — encryption at rest
 
@@ -372,16 +372,16 @@ change. All four tools remain gated by `ESQ_WRITE_TOOLS`.
 |---|---|---|
 | `list_documents` | `matter_id`, `parent_id`, `query`, `limit`, `page_token` | Lists or full-text searches documents; at least one of `matter_id`, `parent_id`, or `query` is required; returns a paginated envelope with `total_count`, `has_more`, and `next_page_token` |
 | `get_document` | `document_id` | Returns document metadata and a direct download URL |
-| `upload_document` | `file_path`, `matter_id`, `name`, `content_type` | Uploads a local file to a matter using Clio's multipart S3 upload flow |
+| `upload_document` | file and target fields, `confirm_write`, `preview_token` | Verifies the exact file and target matter, previews its SHA-256, then uploads it through Clio's multipart flow after confirmation |
 
 ### Tasks (4 tools)
 
 | Tool | Inputs | What it does |
 |---|---|---|
 | `list_tasks` | `matter_id`, `status` (Pending/Complete/In Progress/In Review/Draft), `due_date_start`, `due_date_end`, `limit` | Lists tasks with optional filters |
-| `create_task` | `matter_id`, `name`, `description`, `priority` (High/Normal/Low), `due_date`, `assignee_id` | Creates a task on a matter; priority defaults to Normal |
-| `update_task` | `task_id`, `name`, `description`, `priority`, `due_date`, `status`, `assignee_id` | Updates one or more fields on an existing task |
-| `complete_task` | `task_id` | Marks a task as complete |
+| `create_task` | task fields, `confirm_write`, `preview_token` | Validates the matter and assignee, then previews and creates a task |
+| `update_task` | task fields, `confirm_write`, `preview_token` | Previews exact changes and uses the current task ETag with `If-Match` |
+| `complete_task` | `task_id`, `confirm_write`, `preview_token` | Previews the exact task and matter, then conditionally marks it complete |
 
 ### Calendar (3 tools)
 
@@ -389,7 +389,7 @@ change. All four tools remain gated by `ESQ_WRITE_TOOLS`.
 |---|---|---|
 | `list_calendars` | none | Lists calendars the user can write to; use the returned `id` as `calendar_owner_id` when creating entries |
 | `list_calendar_entries` | `from`, `to` | Lists calendar entries within a date range (YYYY-MM-DD or YYYY-MM-DDTHH:MM) |
-| `create_calendar_entry` | `summary`, `start_at`, `end_at`, `calendar_owner_id`, `description`, `all_day`, `matter_id`, `location`, `send_email_notification`, `attendee_ids` | Creates a calendar entry (hearing, deadline, meeting); `start_at`/`end_at` accept date or datetime |
+| `create_calendar_entry` | event fields, `confirm_write`, `preview_token` | Validates calendar, matter, and attendees and previews any email notification before creation |
 
 ### Time entries (3 tools)
 
@@ -399,15 +399,15 @@ change. All four tools remain gated by `ESQ_WRITE_TOOLS`.
 | `log_time_entry` | `matter_id`, `date`, `quantity_in_hours`, `note`, `price`, `non_billable`, `no_charge`, `activity_description_id`, `user_id` | Creates a new billable (or non-billable) time entry on a matter |
 | `create_activity` | `type`, `date`, `matter_id`, `note`, `quantity_in_hours`, `price`, `non_billable`, `no_charge`, `activity_description_id`, `user_id`, `reference`, `tax_setting` | Creates any Clio activity type — TimeEntry, ExpenseEntry, HardCostEntry, or SoftCostEntry |
 
-### ESQ controlled time-entry writes
+### ESQ controlled writes
 
 The ESQ production fork is read-only unless a write tool is explicitly named in
-`ESQ_WRITE_TOOLS`. It exposes `create_time_entry` and `update_time_entry` only
-when both names are allowlisted. Each tool is dry-run by default and requires a
+`ESQ_WRITE_TOOLS`. Enable only the named routine tools required for the deployed
+workflow. Each controlled tool is dry-run by default and requires a
 second, unchanged call with `confirm_write: true` and the short-lived,
 single-use `preview_token` returned by the dry run. Updates require the current
 Activity ID and ETag, use `If-Match`, and reject billed or invoiced entries.
-Deletion is not implemented. Broad legacy write handlers remain withheld.
+Deletion, trust transfers, permission changes, and bulk mutation are not implemented.
 
 ### Billing (1 tool)
 
@@ -419,7 +419,14 @@ Deletion is not implemented. Broad legacy write handlers remain withheld.
 
 | Tool | Inputs | What it does |
 |---|---|---|
-| `create_note` | `matter_id`, `subject`, `body` | Creates a note on a matter; appears in Clio's matter timeline |
+| `create_note` | note fields, `confirm_write`, `preview_token` | Validates the target matter and previews the full note before creation |
+
+### Communications (2 tools)
+
+| Tool | Inputs | What it does |
+|---|---|---|
+| `list_communications` | matter/search/pagination fields | Lists logged calls, emails, and secure messages |
+| `create_communication` | communication fields, `confirm_write`, `preview_token` | Validates every referenced record and logs a phone or email communication; it does not send an external message |
 
 ### Users (2 tools)
 

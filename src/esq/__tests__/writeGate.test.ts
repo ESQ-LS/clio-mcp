@@ -18,6 +18,7 @@ function registeredWith(writeTools: string): string[] {
   server.registerTool("update_contact", {} as any, vi.fn());
   server.registerTool("create_matter", {} as any, vi.fn());
   server.registerTool("update_matter", {} as any, vi.fn());
+  server.registerTool("upload_document", {} as any, vi.fn());
   return names;
 }
 
@@ -43,6 +44,13 @@ describe("ESQ controlled time-entry write gate", () => {
       "update_contact",
       "create_matter",
       "update_matter",
+    ]);
+  });
+
+  it("exposes document upload only when expressly allowlisted", () => {
+    expect(registeredWith("upload_document")).toEqual([
+      "list_time_entries",
+      "upload_document",
     ]);
   });
 });

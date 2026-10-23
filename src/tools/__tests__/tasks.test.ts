@@ -1,163 +1,91 @@
-import { vi, describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockClioPatch, mockAppendAuditLog } = vi.hoisted(() => ({
-  mockClioPatch: vi.fn(),
-  mockAppendAuditLog: vi.fn().mockResolvedValue(undefined),
+const { mockClioGet, mockClioPost, mockClioPatch, mockAppendAuditLog } = vi.hoisted(() => ({
+  mockClioGet: vi.fn(), mockClioPost: vi.fn(), mockClioPatch: vi.fn(),
+  mockAppendAuditLog: vi.fn().mockResolvedValue(true),
 }));
 
-vi.mock("../../utils/clioClient.js", () => ({
-  clioGet: vi.fn(),
-  clioPost: vi.fn(),
-  clioPatch: mockClioPatch,
-}));
-
-vi.mock("../../utils/auditLog.js", () => ({
-  appendAuditLog: mockAppendAuditLog,
+vi.mock("../../utils/clioClient.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../utils/clioClient.js")>();
+  return { ...actual, clioGet: mockClioGet, clioPost: mockClioPost, clioPatch: mockClioPatch };
+});
+vi.mock("../../utils/auditLog.js", () => ({ appendAuditLog: mockAppendAuditLog }));
+vi.mock("../../auth/tokenStorage.js", () => ({
+  loadTokens: vi.fn(async () => ({ clio_user_id: "100", expires_at: Date.now() + 60000 })),
 }));
 
 import { registerTaskTools } from "../tasks.js";
 
-const TASK_FIXTURE = {
-  id: 1,
-  name: "Draft contract",
-  priority: "Normal",
-  status: "complete",
-  due_at: "2026-01-15T00:00:00Z",
-  completed_at: "2026-05-22T10:00:00Z",
-  matter: { id: 99 },
+const TASK = {
+  id: 1, etag: "task-v1", name: "Draft contract", description: "Synthetic task",
+  priority: "Normal", status: "pending", due_at: "2026-01-15T00:00:00Z",
+  matter: { id: 99, display_number: "00099-001", description: "Synthetic matter", status: "open" },
 };
-
-const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+const handlers = new Map<string, (args: any) => Promise<any>>();
 
 beforeAll(() => {
-  const fakeServer = {
-    registerTool: (name: string, _schema: unknown, handler: (args: Record<string, unknown>) => Promise<unknown>) => {
-      handlers.set(name, handler);
-    },
-  };
-  registerTaskTools(fakeServer as any);
+  registerTaskTools({
+    registerTool: (name: string, _schema: unknown, handler: (args: any) => Promise<any>) => handlers.set(name, handler),
+  } as any);
 });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockAppendAuditLog.mockResolvedValue(undefined);
+  process.env.ENCRYPTION_KEY = "1".repeat(64);
+  mockAppendAuditLog.mockResolvedValue(true);
+  mockClioGet.mockImplementation(async (path: string) => {
+    if (path === "/tasks/1.json") return { data: TASK };
+    if (path === "/matters/99.json") return { data: TASK.matter };
+    if (path === "/users/42.json") return { data: { id: 42, name: "Synthetic Lawyer", enabled: true } };
+    throw new Error(`unexpected path ${path}`);
+  });
+  mockClioPost.mockResolvedValue({ data: TASK });
+  mockClioPatch.mockResolvedValue({ data: { ...TASK, status: "complete", completed_at: "2026-05-22T10:00:00Z" } });
 });
 
-// ─── update_task ──────────────────────────────────────────────────────────────
+describe("controlled task writes", () => {
+  it("previews and confirms task creation with validated references", async () => {
+    const args = { matter_id: 99, name: "Draft contract", description: "Synthetic task", priority: "Normal", due_date: "2026-01-15", assignee_id: 42 };
+    const preview = JSON.parse((await handlers.get("create_task")!(args)).content[0].text);
+    expect(preview.mode).toBe("dry_run");
+    expect(mockClioPost).not.toHaveBeenCalled();
+    await handlers.get("create_task")!({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPost).toHaveBeenCalledWith("/tasks.json", { data: {
+      name: "Draft contract", description: "Synthetic task", priority: "Normal", due_at: "2026-01-15T00:00:00Z",
+      matter: { id: 99 }, assignee: { id: 42, type: "User" },
+    } });
+  });
 
-describe("update_task", () => {
-  it("returns isError without calling clioPatch when all fields are undefined", async () => {
-    const handler = handlers.get("update_task")!;
-    const result = await handler({ task_id: 1 }) as any;
+  it("previews and conditionally updates a task", async () => {
+    const args = { task_id: 1, status: "In Progress", due_date: "2026-01-16" };
+    const preview = JSON.parse((await handlers.get("update_task")!(args)).content[0].text);
     expect(mockClioPatch).not.toHaveBeenCalled();
+    await handlers.get("update_task")!({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPatch).toHaveBeenCalledWith("/tasks/1.json", { data: {
+      due_at: "2026-01-16T00:00:00Z", status: "in_progress",
+    } }, { "If-Match": "task-v1" });
+  });
+
+  it("previews and conditionally completes a task", async () => {
+    const preview = JSON.parse((await handlers.get("complete_task")!({ task_id: 1 })).content[0].text);
+    expect(mockClioPatch).not.toHaveBeenCalled();
+    const result = await handlers.get("complete_task")!({ task_id: 1, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPatch).toHaveBeenCalledWith("/tasks/1.json", { data: { status: "complete" } }, { "If-Match": "task-v1" });
+    expect(JSON.parse(result.content[0].text).task.status).toBe("complete");
+  });
+
+  it("refuses a stale task without writing", async () => {
+    const args = { task_id: 1, name: "Updated" };
+    const preview = JSON.parse((await handlers.get("update_task")!(args)).content[0].text);
+    mockClioGet.mockResolvedValue({ data: { ...TASK, etag: "task-v2" } });
+    const result = await handlers.get("update_task")!({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(result.isError).toBe(true);
+    expect(mockClioPatch).not.toHaveBeenCalled();
   });
 
-  it("translates status 'Complete' via STATUS_MAP to 'complete'", async () => {
-    mockClioPatch.mockResolvedValue({ data: TASK_FIXTURE });
-    const handler = handlers.get("update_task")!;
-    await handler({ task_id: 1, status: "Complete" });
-    expect(mockClioPatch).toHaveBeenCalledWith(
-      "/tasks/1.json",
-      expect.objectContaining({ data: expect.objectContaining({ status: "complete" }) }),
-    );
-  });
-
-  it("translates status 'In Progress' via STATUS_MAP to 'in_progress'", async () => {
-    mockClioPatch.mockResolvedValue({ data: TASK_FIXTURE });
-    const handler = handlers.get("update_task")!;
-    await handler({ task_id: 1, status: "In Progress" });
-    expect(mockClioPatch).toHaveBeenCalledWith(
-      "/tasks/1.json",
-      expect.objectContaining({ data: expect.objectContaining({ status: "in_progress" }) }),
-    );
-  });
-
-  it("formats due_date as due_at with midnight UTC suffix", async () => {
-    mockClioPatch.mockResolvedValue({ data: TASK_FIXTURE });
-    const handler = handlers.get("update_task")!;
-    await handler({ task_id: 1, due_date: "2026-01-15" });
-    expect(mockClioPatch).toHaveBeenCalledWith(
-      "/tasks/1.json",
-      expect.objectContaining({ data: expect.objectContaining({ due_at: "2026-01-15T00:00:00Z" }) }),
-    );
-  });
-
-  it("shapes assignee as { id, type: 'User' } when assignee_id is provided", async () => {
-    mockClioPatch.mockResolvedValue({ data: TASK_FIXTURE });
-    const handler = handlers.get("update_task")!;
-    await handler({ task_id: 1, assignee_id: 42 });
-    expect(mockClioPatch).toHaveBeenCalledWith(
-      "/tasks/1.json",
-      expect.objectContaining({ data: expect.objectContaining({ assignee: { id: 42, type: "User" } }) }),
-    );
-  });
-
-  it("does not include assignee key when assignee_id is absent", async () => {
-    mockClioPatch.mockResolvedValue({ data: TASK_FIXTURE });
-    const handler = handlers.get("update_task")!;
-    await handler({ task_id: 1, name: "New name" });
-    const sentBody = mockClioPatch.mock.calls[0][1] as { data: Record<string, unknown> };
-    expect(sentBody.data).not.toHaveProperty("assignee");
-  });
-
-  it("calls appendAuditLog with outcome 'success' on happy path", async () => {
-    mockClioPatch.mockResolvedValue({ data: TASK_FIXTURE });
-    const handler = handlers.get("update_task")!;
-    await handler({ task_id: 1, name: "New name" });
-    expect(mockAppendAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({ tool: "update_task", outcome: "success" }),
-    );
-  });
-
-  it("returns isError and logs outcome 'error' when clioPatch rejects", async () => {
-    mockClioPatch.mockRejectedValue(new Error("network failure"));
-    const handler = handlers.get("update_task")!;
-    const result = await handler({ task_id: 1, name: "X" }) as any;
+  it("requires at least one field for updates", async () => {
+    const result = await handlers.get("update_task")!({ task_id: 1 });
     expect(result.isError).toBe(true);
-    expect(mockAppendAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({ tool: "update_task", outcome: "error", error_message: "network failure" }),
-    );
-  });
-});
-
-// ─── complete_task ────────────────────────────────────────────────────────────
-
-describe("complete_task", () => {
-  it("calls clioPatch with status 'complete' from STATUS_MAP", async () => {
-    mockClioPatch.mockResolvedValue({ data: TASK_FIXTURE });
-    const handler = handlers.get("complete_task")!;
-    await handler({ task_id: 1 });
-    expect(mockClioPatch).toHaveBeenCalledWith("/tasks/1.json", { data: { status: "complete" } });
-  });
-
-  it("returns task shape with id, name, status, and completed_at", async () => {
-    mockClioPatch.mockResolvedValue({ data: TASK_FIXTURE });
-    const handler = handlers.get("complete_task")!;
-    const result = await handler({ task_id: 1 }) as any;
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed).toMatchObject({
-      success: true,
-      task: { id: 1, name: "Draft contract", status: "complete", completed_at: "2026-05-22T10:00:00Z" },
-    });
-  });
-
-  it("calls appendAuditLog with outcome 'success' on happy path", async () => {
-    mockClioPatch.mockResolvedValue({ data: TASK_FIXTURE });
-    const handler = handlers.get("complete_task")!;
-    await handler({ task_id: 1 });
-    expect(mockAppendAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({ tool: "complete_task", outcome: "success" }),
-    );
-  });
-
-  it("returns isError and logs outcome 'error' when clioPatch rejects", async () => {
-    mockClioPatch.mockRejectedValue(new Error("timeout"));
-    const handler = handlers.get("complete_task")!;
-    const result = await handler({ task_id: 1 }) as any;
-    expect(result.isError).toBe(true);
-    expect(mockAppendAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({ tool: "complete_task", outcome: "error", error_message: "timeout" }),
-    );
+    expect(mockClioPatch).not.toHaveBeenCalled();
   });
 });

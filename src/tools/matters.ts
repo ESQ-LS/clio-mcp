@@ -20,25 +20,51 @@ const MATTER_LIST_FIELDS =
 
 const MATTER_DETAIL_FIELDS =
   "id,etag,display_number,description,status,client{id,name},practice_area{id,name},open_date,close_date,billable," +
-  "responsible_attorney{id,name},originating_attorney{id,name},client_reference,updated_at";
+  "pending_date,responsible_attorney{id,name},originating_attorney{id,name},responsible_staff{id,name}," +
+  "matter_stage{id,name},group{id,name},location,client_reference,updated_at," +
+  "relationships{id,description,contact{id,name}},custom_field_values{id,field_name,field_type,value,custom_field{id}}," +
+  "statute_of_limitations{status,due_at}";
 
 const matterStatusSchema = z.enum(["open", "pending", "closed"]);
+const matterCustomFieldValueSchema = z.object({
+  custom_field_id: z.number().int().positive(),
+  value: z.union([z.string(), z.number(), z.boolean()]),
+});
+const matterRelationshipSchema = z.object({
+  id: z.number().int().positive().optional(),
+  contact_id: z.number().int().positive(),
+  description: z.string().trim().min(1).max(1000),
+});
 const matterFieldsSchema = {
   client_id: z.number().int().positive().optional().describe("Clio contact ID of the client"),
   description: z.string().trim().min(1).max(10000).optional().describe("Matter subject / description"),
   practice_area_id: z.number().int().positive().optional().describe("Clio practice area ID"),
   status: matterStatusSchema.optional().describe("Matter status"),
   open_date: z.string().date().optional().describe("Open date (YYYY-MM-DD)"),
+  pending_date: z.string().date().optional().describe("Pending date (YYYY-MM-DD)"),
   close_date: z.string().date().optional().describe("Close date (YYYY-MM-DD)"),
   billable: z.boolean().optional().describe("Whether this matter is billable"),
   responsible_attorney_id: z.number().int().positive().optional().describe("Clio user ID of the responsible attorney"),
   originating_attorney_id: z.number().int().positive().optional().describe("Clio user ID of the originating attorney"),
+  responsible_staff_id: z.number().int().positive().optional().describe("Clio user ID of responsible staff"),
+  matter_stage_id: z.number().int().positive().optional().describe("Clio matter stage ID"),
+  group_id: z.number().int().positive().optional().describe("Clio group ID"),
+  location: z.string().trim().max(500).optional().describe("Matter location"),
   client_reference: z.string().trim().max(255).optional().describe("External reference for cross-linking systems"),
+  display_number: z.string().trim().min(1).max(255).optional().describe("Manual matter number; only accepted when the Clio account permits it"),
+  require_utbms_codes: z.boolean().optional(),
+  custom_field_values: z.array(matterCustomFieldValueSchema).max(100).optional(),
+  statute_of_limitations_due_at: z.string().date().optional(),
+  statute_of_limitations_status: z.enum(["pending", "in_progress", "in_review", "complete", "draft"]).optional(),
+  relationships: z.array(matterRelationshipSchema).max(50).optional(),
 };
 
 function buildMatterData(input: Record<string, unknown>): Record<string, unknown> {
   const data: Record<string, unknown> = {};
-  for (const key of ["description", "status", "open_date", "close_date", "billable", "client_reference"] as const) {
+  for (const key of [
+    "description", "display_number", "status", "open_date", "pending_date", "close_date", "billable",
+    "location", "client_reference", "require_utbms_codes",
+  ] as const) {
     if (input[key] !== undefined) data[key] = input[key];
   }
   for (const [inputKey, apiKey] of [
@@ -46,8 +72,27 @@ function buildMatterData(input: Record<string, unknown>): Record<string, unknown
     ["practice_area_id", "practice_area"],
     ["responsible_attorney_id", "responsible_attorney"],
     ["originating_attorney_id", "originating_attorney"],
+    ["responsible_staff_id", "responsible_staff"],
+    ["matter_stage_id", "matter_stage"],
+    ["group_id", "group"],
   ] as const) {
     if (input[inputKey] !== undefined) data[apiKey] = { id: input[inputKey] };
+  }
+  if (input.custom_field_values !== undefined) {
+    data.custom_field_values = (input.custom_field_values as Array<{ custom_field_id: number; value: unknown }>).map(
+      ({ custom_field_id, value }) => ({ custom_field: { id: custom_field_id }, value: String(value) }),
+    );
+  }
+  if (input.statute_of_limitations_due_at !== undefined || input.statute_of_limitations_status !== undefined) {
+    data.statute_of_limitations = {
+      ...(input.statute_of_limitations_due_at !== undefined && { due_at: input.statute_of_limitations_due_at }),
+      ...(input.statute_of_limitations_status !== undefined && { status: input.statute_of_limitations_status }),
+    };
+  }
+  if (input.relationships !== undefined) {
+    data.relationships = (input.relationships as Array<{ id?: number; contact_id: number; description: string }>).map(
+      ({ id, contact_id, description }) => ({ ...(id !== undefined && { id }), contact: { id: contact_id }, description }),
+    );
   }
   return data;
 }
@@ -67,12 +112,32 @@ async function resolveMatterReferences(input: Record<string, unknown>) {
   for (const [inputKey, outputKey] of [
     ["responsible_attorney_id", "responsible_attorney"],
     ["originating_attorney_id", "originating_attorney"],
+    ["responsible_staff_id", "responsible_staff"],
   ] as const) {
     if (input[inputKey] !== undefined) {
       const response = await clioGet(`/users/${input[inputKey]}.json`, { fields: "id,name,enabled" });
       if (response?.data?.id !== input[inputKey] || response.data.enabled === false) throw new Error(`${outputKey} validation failed.`);
       refs[outputKey] = { id: response.data.id, name: response.data.name };
     }
+  }
+  if (input.matter_stage_id !== undefined) {
+    const response = await clioGet(`/matter_stages/${input.matter_stage_id}.json`, { fields: "id,name" });
+    if (response?.data?.id !== input.matter_stage_id) throw new Error("Matter-stage validation failed.");
+    refs.matter_stage = { id: response.data.id, name: response.data.name };
+  }
+  if (input.group_id !== undefined) {
+    const response = await clioGet(`/groups/${input.group_id}.json`, { fields: "id,name" });
+    if (response?.data?.id !== input.group_id) throw new Error("Group validation failed.");
+    refs.group = { id: response.data.id, name: response.data.name };
+  }
+  if (input.relationships !== undefined) {
+    const validated = [];
+    for (const relationship of input.relationships as Array<{ contact_id: number; description: string }>) {
+      const response = await clioGet(`/contacts/${relationship.contact_id}.json`, { fields: "id,name,type" });
+      if (response?.data?.id !== relationship.contact_id) throw new Error(`Related contact ${relationship.contact_id} validation failed.`);
+      validated.push({ contact: { id: response.data.id, name: response.data.name, type: response.data.type }, description: relationship.description });
+    }
+    refs.relationships = validated;
   }
   return refs;
 }
@@ -133,6 +198,7 @@ export function registerMatterTools(server: McpServer): void {
           practice_area: m.practice_area?.name ?? null,
           open_date: m.open_date,
           close_date: m.close_date ?? null,
+          pending_date: m.pending_date ?? null,
         }));
 
         return {
@@ -179,7 +245,16 @@ export function registerMatterTools(server: McpServer): void {
           originating_attorney: m.originating_attorney
             ? { id: m.originating_attorney.id, name: m.originating_attorney.name }
             : null,
+          responsible_staff: m.responsible_staff
+            ? { id: m.responsible_staff.id, name: m.responsible_staff.name }
+            : null,
+          matter_stage: m.matter_stage ? { id: m.matter_stage.id, name: m.matter_stage.name } : null,
+          group: m.group ? { id: m.group.id, name: m.group.name } : null,
+          location: m.location ?? null,
           client_reference: m.client_reference ?? null,
+          custom_field_values: m.custom_field_values ?? [],
+          statute_of_limitations: m.statute_of_limitations ?? null,
+          relationships: m.relationships ?? [],
           updated_at: m.updated_at,
         };
 
@@ -214,10 +289,21 @@ export function registerMatterTools(server: McpServer): void {
         practice_area_id: matterFieldsSchema.practice_area_id,
         status: matterStatusSchema.default("pending").describe("Initial status; defaults to pending for intake"),
         open_date: matterFieldsSchema.open_date,
+        pending_date: matterFieldsSchema.pending_date,
         billable: z.boolean().default(true),
         responsible_attorney_id: matterFieldsSchema.responsible_attorney_id,
         originating_attorney_id: matterFieldsSchema.originating_attorney_id,
+        responsible_staff_id: matterFieldsSchema.responsible_staff_id,
+        matter_stage_id: matterFieldsSchema.matter_stage_id,
+        group_id: matterFieldsSchema.group_id,
+        location: matterFieldsSchema.location,
         client_reference: matterFieldsSchema.client_reference,
+        display_number: matterFieldsSchema.display_number,
+        require_utbms_codes: matterFieldsSchema.require_utbms_codes,
+        custom_field_values: matterFieldsSchema.custom_field_values,
+        statute_of_limitations_due_at: matterFieldsSchema.statute_of_limitations_due_at,
+        statute_of_limitations_status: matterFieldsSchema.statute_of_limitations_status,
+        relationships: matterFieldsSchema.relationships,
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },

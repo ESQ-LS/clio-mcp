@@ -19,7 +19,10 @@ const CONTACT_LIST_FIELDS =
   "id,name,email_addresses{address,name},phone_numbers{number,name},company{id,name},type";
 
 const CONTACT_DETAIL_FIELDS =
-  "id,etag,name,first_name,last_name,title,email_addresses{id,address,name,default_email},phone_numbers{id,number,name},company{id,name},type,created_at,updated_at,addresses{id,name,street,city,province,postal_code,country},custom_field_values{id,field_name,field_type,value,custom_field}";
+  "id,etag,name,prefix,first_name,middle_name,last_name,title,date_of_birth,clio_connect_email,ledes_client_id,sales_tax_number,require_utbms_codes," +
+  "email_addresses{id,address,name,default_email},phone_numbers{id,number,name,default_number},web_sites{id,address,name,default_web_site}," +
+  "company{id,name},type,created_at,updated_at,addresses{id,name,street,city,province,postal_code,country}," +
+  "custom_field_values{id,field_name,field_type,value,custom_field}";
 
 type ContactCustomField = {
   definition_id: number;
@@ -30,12 +33,43 @@ type ContactCustomField = {
 
 const emailSchema = z.string().email().max(254).optional();
 const contactTypeSchema = z.enum(["Person", "Company"]);
+const customFieldValueSchema = z.object({
+  custom_field_id: z.number().int().positive(),
+  value: z.union([z.string(), z.number(), z.boolean()]),
+});
+const emailAddressSchema = z.object({
+  id: z.number().int().positive().optional(),
+  name: z.enum(["Work", "Home", "Other"]).default("Work"),
+  address: z.string().email().max(254),
+  default_email: z.boolean().optional(),
+});
+const phoneNumberSchema = z.object({
+  id: z.number().int().positive().optional(),
+  name: z.enum(["Work", "Home", "Mobile", "Fax", "Pager", "Skype", "Other"]).default("Work"),
+  number: z.string().trim().min(3).max(50),
+  default_number: z.boolean().optional(),
+});
+const addressSchema = z.object({
+  id: z.number().int().positive().optional(),
+  name: z.enum(["Work", "Home", "Billing", "Other"]).default("Work"),
+  street: z.string().trim().max(500).optional(), city: z.string().trim().max(255).optional(),
+  province: z.string().trim().max(255).optional(), postal_code: z.string().trim().max(50).optional(),
+  country: z.string().trim().max(255).optional(),
+});
+const webSiteSchema = z.object({
+  id: z.number().int().positive().optional(),
+  name: z.enum(["Work", "Personal", "Twitter", "Facebook", "LinkedIn", "Instant Messenger", "Other"]).default("Work"),
+  address: z.string().url().max(2048), default_web_site: z.boolean().optional(),
+});
 const contactFieldsSchema = {
   type: contactTypeSchema.optional(),
   name: z.string().trim().min(1).max(255).optional(),
+  prefix: z.string().trim().max(50).optional(),
   first_name: z.string().trim().min(1).max(255).optional(),
+  middle_name: z.string().trim().max(255).optional(),
   last_name: z.string().trim().min(1).max(255).optional(),
   title: z.string().trim().max(255).optional(),
+  date_of_birth: z.string().date().optional(),
   email: emailSchema,
   phone: z.string().trim().min(3).max(50).optional(),
   company_id: z.number().int().positive().optional(),
@@ -44,11 +78,25 @@ const contactFieldsSchema = {
   province: z.string().trim().max(255).optional(),
   postal_code: z.string().trim().max(50).optional(),
   country: z.string().trim().max(255).optional(),
+  web_site: z.string().url().max(2048).optional(),
+  clio_connect_email: z.string().email().max(254).optional(),
+  ledes_client_id: z.string().trim().max(255).optional(),
+  sales_tax_number: z.string().trim().max(255).optional(),
+  require_utbms_codes: z.boolean().optional(),
+  custom_field_values: z.array(customFieldValueSchema).max(100).optional(),
+  email_addresses: z.array(emailAddressSchema).max(20).optional(),
+  phone_numbers: z.array(phoneNumberSchema).max(20).optional(),
+  addresses: z.array(addressSchema).max(20).optional(),
+  web_sites: z.array(webSiteSchema).max(20).optional(),
 };
 
 function buildContactData(input: Record<string, unknown>): Record<string, unknown> {
   const data: Record<string, unknown> = {};
-  for (const key of ["type", "name", "first_name", "last_name", "title"] as const) {
+  for (const key of [
+    "type", "name", "prefix", "first_name", "middle_name", "last_name", "title",
+    "date_of_birth", "clio_connect_email", "ledes_client_id", "sales_tax_number",
+    "require_utbms_codes",
+  ] as const) {
     if (input[key] !== undefined) data[key] = input[key];
   }
   if (input.email !== undefined) {
@@ -65,6 +113,17 @@ function buildContactData(input: Record<string, unknown>): Record<string, unknow
           .map((key) => [key, input[key]]),
       ),
     }];
+  }
+  if (input.web_site !== undefined) {
+    data.web_sites = [{ name: "Work", address: input.web_site, default_web_site: true }];
+  }
+  if (input.custom_field_values !== undefined) {
+    data.custom_field_values = (input.custom_field_values as Array<{ custom_field_id: number; value: unknown }>).map(
+      ({ custom_field_id, value }) => ({ custom_field: { id: custom_field_id }, value: String(value) }),
+    );
+  }
+  for (const key of ["email_addresses", "phone_numbers", "addresses", "web_sites"] as const) {
+    if (input[key] !== undefined) data[key] = input[key];
   }
   return data;
 }
@@ -240,13 +299,17 @@ export function registerContactTools(server: McpServer): void {
           id: c.id,
           etag: c.etag ?? null,
           name: c.name,
+          prefix: c.prefix ?? null,
           first_name: c.first_name ?? null,
+          middle_name: c.middle_name ?? null,
           last_name: c.last_name ?? null,
           title: c.title ?? null,
+          date_of_birth: c.date_of_birth ?? null,
           type: c.type,
           company: c.company ? { id: c.company.id, name: c.company.name } : null,
           emails: (c.email_addresses ?? []).map((e: any) => ({ id: e.id, label: e.name, address: e.address, default_email: e.default_email })),
           phone_numbers: (c.phone_numbers ?? []).map((p: any) => ({ id: p.id, label: p.name, number: p.number })),
+          web_sites: (c.web_sites ?? []).map((w: any) => ({ id: w.id, label: w.name, address: w.address, default_web_site: w.default_web_site })),
           addresses: (c.addresses ?? []).map((a: any) => ({
             id: a.id,
             label: a.name,
@@ -258,6 +321,10 @@ export function registerContactTools(server: McpServer): void {
           })),
           created_at: c.created_at,
           updated_at: c.updated_at,
+          clio_connect_email: c.clio_connect_email ?? null,
+          ledes_client_id: c.ledes_client_id ?? null,
+          sales_tax_number: c.sales_tax_number ?? null,
+          require_utbms_codes: c.require_utbms_codes ?? null,
           custom_field_values: parseContactCustomFields(c.custom_field_values),
         };
 
@@ -285,8 +352,11 @@ export function registerContactTools(server: McpServer): void {
         type: contactTypeSchema.describe("Person or Company"),
         name: z.string().trim().min(1).max(255).describe("Full person name or legal company name"),
         first_name: contactFieldsSchema.first_name,
+        prefix: contactFieldsSchema.prefix,
+        middle_name: contactFieldsSchema.middle_name,
         last_name: contactFieldsSchema.last_name,
         title: contactFieldsSchema.title,
+        date_of_birth: contactFieldsSchema.date_of_birth,
         email: contactFieldsSchema.email,
         phone: contactFieldsSchema.phone,
         company_id: contactFieldsSchema.company_id,
@@ -295,6 +365,16 @@ export function registerContactTools(server: McpServer): void {
         province: contactFieldsSchema.province,
         postal_code: contactFieldsSchema.postal_code,
         country: contactFieldsSchema.country,
+        web_site: contactFieldsSchema.web_site,
+        clio_connect_email: contactFieldsSchema.clio_connect_email,
+        ledes_client_id: contactFieldsSchema.ledes_client_id,
+        sales_tax_number: contactFieldsSchema.sales_tax_number,
+        require_utbms_codes: contactFieldsSchema.require_utbms_codes,
+        custom_field_values: contactFieldsSchema.custom_field_values,
+        email_addresses: contactFieldsSchema.email_addresses,
+        phone_numbers: contactFieldsSchema.phone_numbers,
+        addresses: contactFieldsSchema.addresses,
+        web_sites: contactFieldsSchema.web_sites,
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },

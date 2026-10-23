@@ -176,3 +176,44 @@ Restore the prior immutable image `esqdocxmcpacr.azurecr.io/esq-clio-mcp:esq-494
 - Full test suite: 126 passed; production TypeScript build passed.
 - Infrastructure validation/what-if: not applicable; no infrastructure,
   configuration, identity, RBAC, OAuth scope, or resource changes are planned.
+
+## 11. Proposed solo-practice routine-write release (2026-10-23)
+
+Status: source implemented and locally validated; not committed, merged, enabled,
+or deployed.
+
+The proposed production allowlist is exact and intentionally excludes the broad
+legacy activity handlers:
+
+```text
+create_contact,update_contact,create_matter,update_matter,create_task,update_task,complete_task,create_note,create_communication,create_calendar_entry,upload_document,create_time_entry,update_time_entry
+```
+
+Excluded: `create_activity`, `log_time_entry`, all delete operations, nested
+`_destroy`, trust transfers, permission changes, billing/rate mutations, and
+bulk mutation.
+
+Document path correction: a controlled MCP upload creates the document in Clio.
+The Clio-managed OneDrive `/Clio` tree is the upstream source for the existing
+one-way Azure reconciliation into SharePoint `Clio Mirror`.
+
+Release gates:
+
+- [x] Synthetic focused and full-suite tests pass locally.
+- [x] Production TypeScript build and whitespace checks pass locally.
+- [x] Production dependency audit reports zero vulnerabilities.
+- [x] Manifest test proves the exact routine-write allowlist and excludes the
+  legacy broad activity handlers.
+- [ ] Commit, push, and pull-request review are separately authorized.
+- [ ] Current Azure target, image, revision, and rollback image are re-read.
+- [ ] Current Clio developer-app permissions are verified for every selected
+  resource before enabling the allowlist.
+- [ ] Merge and production deployment receive separate authorization.
+- [ ] Post-deploy discovery proves the exact manifest.
+- [ ] Authentication is renewed if revision-local token storage requires it.
+- [ ] Acceptance uses labelled synthetic/test records and dry runs before any
+  confirmed live-record mutation.
+
+Rollback: restore the recorded pre-deploy immutable image and the existing
+`ESQ_WRITE_TOOLS=create_time_entry,update_time_entry` value. Do not delete Azure
+resources or alter the Clio developer application during rollback.
