@@ -189,6 +189,48 @@ describe("controlled matter writes", () => {
     } }, { "If-Match": "matter-v1" });
   });
 
+  it("updates only a relationship proven to belong to the current matter and contact", async () => {
+    const current = {
+      ...MATTER,
+      relationships: [{ id: 501, description: "Old role", contact: { id: 2, name: "Synthetic Related" } }],
+    };
+    mockClioGet.mockImplementation(async (path: string) => {
+      if (path === "/matters/42.json") return { data: current };
+      if (path === "/contacts/2.json") return { data: { id: 2, name: "Synthetic Related", type: "Person" } };
+      throw new Error(`unexpected path ${path}`);
+    });
+    const args = {
+      matter_id: 42,
+      relationships: [{ id: 501, contact_id: 2, description: "Updated role" }],
+    };
+    const preview = JSON.parse((await handlers.update_matter(args)).content[0].text);
+    await handlers.update_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: {
+      relationships: [{ id: 501, contact: { id: 2 }, description: "Updated role" }],
+    } }, { "If-Match": "matter-v1" });
+  });
+
+  it("rejects foreign relationship IDs and relationship IDs on creation", async () => {
+    const current = {
+      ...MATTER,
+      relationships: [{ id: 501, description: "Old role", contact: { id: 2, name: "Synthetic Related" } }],
+    };
+    mockClioGet.mockResolvedValue({ data: current });
+    const foreign = await handlers.update_matter({
+      matter_id: 42,
+      relationships: [{ id: 999, contact_id: 2, description: "Updated role" }],
+    });
+    expect(foreign.isError).toBe(true);
+
+    mockClioGet.mockResolvedValue(CLIENT);
+    const createWithId = await handlers.create_matter({
+      ...CREATE_ARGS,
+      relationships: [{ id: 501, contact_id: 2, description: "Primary contact" }],
+    });
+    expect(createWithId.isError).toBe(true);
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
   it("fails closed when audit persistence fails", async () => {
     mockAppendAuditLog.mockResolvedValue(false);
     const result = await handlers.create_matter(CREATE_ARGS);

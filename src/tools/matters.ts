@@ -107,7 +107,7 @@ function buildMatterUpdateData(input: Record<string, unknown>, current: any): Re
   return data;
 }
 
-async function resolveMatterReferences(input: Record<string, unknown>) {
+async function resolveMatterReferences(input: Record<string, unknown>, currentMatter?: any) {
   const refs: Record<string, unknown> = {};
   if (input.client_id !== undefined) {
     const response = await clioGet(`/contacts/${input.client_id}.json`, { fields: "id,name,type" });
@@ -142,10 +142,27 @@ async function resolveMatterReferences(input: Record<string, unknown>) {
   }
   if (input.relationships !== undefined) {
     const validated = [];
-    for (const relationship of input.relationships as Array<{ contact_id: number; description: string }>) {
+    for (const relationship of input.relationships as Array<{ id?: number; contact_id: number; description: string }>) {
+      if (relationship.id !== undefined) {
+        if (!currentMatter) {
+          throw new Error("Relationship IDs cannot be supplied when creating a matter.");
+        }
+        if (!Array.isArray(currentMatter.relationships)) {
+          throw new Error("Malformed current matter relationships response.");
+        }
+        const existing = currentMatter.relationships.find((entry: any) => entry?.id === relationship.id);
+        if (!existing) throw new Error("The selected relationship does not belong to this matter.");
+        if (existing.contact?.id !== relationship.contact_id) {
+          throw new Error("The selected relationship does not belong to the supplied contact.");
+        }
+      }
       const response = await clioGet(`/contacts/${relationship.contact_id}.json`, { fields: "id,name,type" });
       if (response?.data?.id !== relationship.contact_id) throw new Error(`Related contact ${relationship.contact_id} validation failed.`);
-      validated.push({ contact: { id: response.data.id, name: response.data.name, type: response.data.type }, description: relationship.description });
+      validated.push({
+        ...(relationship.id !== undefined && { id: relationship.id }),
+        contact: { id: response.data.id, name: response.data.name, type: response.data.type },
+        description: relationship.description,
+      });
     }
     refs.relationships = validated;
   }
@@ -314,7 +331,7 @@ export function registerMatterTools(server: McpServer): void {
         custom_field_values: matterFieldsSchema.custom_field_values,
         statute_of_limitations_due_at: matterFieldsSchema.statute_of_limitations_due_at,
         statute_of_limitations_status: matterFieldsSchema.statute_of_limitations_status,
-        relationships: matterFieldsSchema.relationships,
+        relationships: z.array(matterRelationshipSchema.omit({ id: true })).max(50).optional(),
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },
@@ -403,7 +420,7 @@ export function registerMatterTools(server: McpServer): void {
           throw new Error("Clio did not return a matter ETag; no update can be performed safely.");
         }
         data = buildMatterUpdateData(input, current);
-        const references = await resolveMatterReferences(input);
+        const references = await resolveMatterReferences(input, current);
         const proposal = {
           record_id: input.matter_id,
           current_etag: current.etag,
