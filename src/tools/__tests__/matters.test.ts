@@ -28,7 +28,7 @@ vi.mock("../../auth/tokenStorage.js", () => ({
   loadTokens: vi.fn(async () => ({ clio_user_id: "100", expires_at: Date.now() + 60000 })),
 }));
 
-import { registerMatterTools } from "../matters.js";
+import { firmCalendarDate, registerMatterTools } from "../matters.js";
 
 const handlers: Record<string, Function> = {};
 beforeAll(() => {
@@ -68,6 +68,16 @@ beforeEach(() => {
 });
 
 describe("controlled matter writes", () => {
+  it("derives lifecycle dates in the configured firm timezone", () => {
+    process.env.ESQ_FIRM_TIMEZONE = "America/Toronto";
+    expect(firmCalendarDate(new Date("2026-10-24T01:00:00Z"))).toBe("2026-10-23");
+  });
+
+  it("requests pending_date when listing matters", async () => {
+    mockClioGet.mockResolvedValue({ data: [{ id: 42, status: "pending", pending_date: "2026-10-23" }] });
+    await handlers.list_matters({ limit: 25 });
+    expect(mockClioGet.mock.calls[0][1].fields).toContain("pending_date");
+  });
   it("defaults a pending intake to pending_date without inventing open_date", async () => {
     const args = {
       client_id: 1,

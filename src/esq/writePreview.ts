@@ -32,6 +32,10 @@ async function authenticatedActor(): Promise<string> {
 export function safeWriteError(error: unknown): string {
   // Clio validation errors may echo client input; keep it out of audit entries.
   if (error instanceof ClioApiError) return `Clio API request failed with status ${error.statusCode}.`;
+  if (error && typeof error === "object" &&
+      ("path" in error || "dest" in error || "syscall" in error) && "code" in error) {
+    return "Local file operation failed.";
+  }
   return error instanceof Error ? error.message : "Unknown error";
 }
 

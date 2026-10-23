@@ -41,6 +41,9 @@ describe("routine preview-controlled writes", () => {
     const audit = JSON.stringify(mockAppendAuditLog.mock.calls);
     expect(audit).not.toContain(args.subject);
     expect(audit).not.toContain(args.body);
+    expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      tool: "create_note", confirmation_state: "confirmed", outcome: "attempt",
+    }));
   });
 
   it("previews notification consequences before creating a calendar entry", async () => {
@@ -59,6 +62,19 @@ describe("routine preview-controlled writes", () => {
     await handlers.create_calendar_entry({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledOnce();
     expect(JSON.stringify(mockAppendAuditLog.mock.calls)).not.toContain(args.summary);
+  });
+
+  it("rejects duplicate or excessive calendar attendees before API validation", async () => {
+    const handlers = handlersFor(registerCalendarTools);
+    const base = {
+      summary: "Synthetic hearing", start_at: "2026-11-01T09:00", end_at: "2026-11-01T10:00",
+      calendar_owner_id: 1,
+    };
+    expect((await handlers.create_calendar_entry({ ...base, attendee_ids: [42, 42] })).isError).toBe(true);
+    expect((await handlers.create_calendar_entry({
+      ...base, attendee_ids: Array.from({ length: 21 }, (_, index) => index + 1),
+    })).isError).toBe(true);
+    expect(mockClioGet).not.toHaveBeenCalled();
   });
 
   it("logs a communication without sending an external message", async () => {

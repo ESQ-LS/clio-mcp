@@ -207,9 +207,13 @@ Release gates:
   legacy broad activity handlers.
 - [x] Commit and push the superseding pull request under separate authorization.
 - [ ] Complete pull-request code and security review against the current head.
+  The first review completed with ten findings; the branch now addresses all
+  ten with regression coverage, and fresh reviews are required on the new head.
 - [x] Current Azure target, image, revision, and rollback image are re-read.
 - [ ] Current Clio developer-app permissions are verified for every selected
   resource before enabling the allowlist.
+- [ ] Configure `ESQ_CLIO_UPLOAD_ROOT` as an absolute, dedicated staging root
+  before enabling `upload_document`; confirm `ESQ_FIRM_TIMEZONE=America/Toronto`.
 - [ ] Merge and production deployment receive separate authorization.
 - [ ] Post-deploy discovery proves the exact manifest.
 - [ ] Authentication is renewed if revision-local token storage requires it.

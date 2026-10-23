@@ -138,7 +138,7 @@ export function registerTaskTools(server: McpServer): void {
         await consumeWritePreviewToken(preview_token, "create_task", proposal);
         const preWriteAuditOk = await appendAuditLog({
           tool: "create_task", action: "create", confirmation_state: "confirmed",
-          args: { confirm_write: true, matter_id, priority, due_date, assignee_id }, outcome: "success", matter_id,
+          args: { confirm_write: true, matter_id, priority, due_date, assignee_id }, outcome: "attempt", matter_id,
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;
@@ -235,7 +235,7 @@ export function registerTaskTools(server: McpServer): void {
         await consumeWritePreviewToken(preview_token, "update_task", proposal);
         const preWriteAuditOk = await appendAuditLog({
           tool: "update_task", action: "update", confirmation_state: "confirmed",
-          args: { confirm_write: true, task_id, fields_changed: Object.keys(taskData) }, outcome: "success",
+          args: { confirm_write: true, task_id, fields_changed: Object.keys(taskData) }, outcome: "attempt",
           ...(current.matter?.id && { matter_id: current.matter.id }),
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
@@ -320,7 +320,7 @@ export function registerTaskTools(server: McpServer): void {
         await consumeWritePreviewToken(preview_token, "complete_task", proposal);
         const preWriteAuditOk = await appendAuditLog({
           tool: "complete_task", action: "update", confirmation_state: "confirmed",
-          args: { confirm_write: true, task_id }, outcome: "success",
+          args: { confirm_write: true, task_id }, outcome: "attempt",
           ...(current.matter?.id && { matter_id: current.matter.id }),
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");

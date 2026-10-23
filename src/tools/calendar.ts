@@ -109,7 +109,7 @@ export function registerCalendarTools(server: McpServer): void {
         matter_id: z.number().int().positive().optional().describe("Matter ID to associate this entry with"),
         location: z.string().optional().describe("Geographic location of the event"),
         send_email_notification: z.boolean().optional().describe("Send email notifications to attendees"),
-        attendee_ids: z.array(z.number().int().positive()).optional().describe("List of Clio user IDs to invite as attendees"),
+        attendee_ids: z.array(z.number().int().positive()).max(20).optional().describe("Up to 20 unique Clio user IDs to invite as attendees"),
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },
@@ -118,6 +118,9 @@ export function registerCalendarTools(server: McpServer): void {
     async ({ summary, start_at, end_at, calendar_owner_id, description, all_day, matter_id, location, send_email_notification, attendee_ids, confirm_write, preview_token }) => {
       let writeAttempted = false;
       try {
+        const uniqueAttendeeIds = [...new Set(attendee_ids ?? [])];
+        if (uniqueAttendeeIds.length !== (attendee_ids ?? []).length) throw new Error("attendee_ids must be unique.");
+        if (uniqueAttendeeIds.length > 20) throw new Error("No more than 20 attendees may be supplied.");
         const body: Record<string, unknown> = {
           summary,
           start_at: toIso(start_at),
@@ -129,7 +132,7 @@ export function registerCalendarTools(server: McpServer): void {
         if (matter_id !== undefined)                 body.matter = { id: matter_id };
         if (location !== undefined)                  body.location = location;
         if (send_email_notification !== undefined)   body.send_email_notification = send_email_notification;
-        if (attendee_ids?.length)                    body.attendees = attendee_ids.map((id) => ({ id }));
+        if (uniqueAttendeeIds.length)                body.attendees = uniqueAttendeeIds.map((id) => ({ id }));
 
         const calendar = (await clioGet(`/calendars/${calendar_owner_id}.json`, { fields: "id,name,type" }))?.data;
         if (calendar?.id !== calendar_owner_id) throw new Error("Calendar validation failed.");
@@ -138,7 +141,7 @@ export function registerCalendarTools(server: McpServer): void {
         }))?.data;
         if (matter_id !== undefined && matter?.id !== matter_id) throw new Error("Matter validation failed.");
         const attendees = [];
-        for (const attendeeId of attendee_ids ?? []) {
+        for (const attendeeId of uniqueAttendeeIds) {
           const user = (await clioGet(`/users/${attendeeId}.json`, { fields: "id,name,enabled" }))?.data;
           if (user?.id !== attendeeId || user.enabled === false) throw new Error(`Attendee ${attendeeId} validation failed.`);
           attendees.push({ id: user.id, name: user.name });
@@ -166,7 +169,7 @@ export function registerCalendarTools(server: McpServer): void {
         const preWriteAuditOk = await appendAuditLog({
           tool: "create_calendar_entry", action: "create", confirmation_state: "confirmed",
           args: { confirm_write: true, start_at, end_at, calendar_owner_id, matter_id, send_email_notification: send_email_notification ?? false },
-          outcome: "success", ...(matter_id && { matter_id }),
+          outcome: "attempt", ...(matter_id && { matter_id }),
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;

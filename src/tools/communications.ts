@@ -162,7 +162,7 @@ export function registerCommunicationTools(server: McpServer): void {
         const preWriteAuditOk = await appendAuditLog({
           tool: "create_communication", action: "create", confirmation_state: "confirmed",
           args: { confirm_write: true, matter_id, type, received_at, participant_count: senders.length + receivers.length },
-          outcome: "success", matter_id,
+          outcome: "attempt", matter_id,
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;

@@ -409,6 +409,12 @@ single-use `preview_token` returned by the dry run. Updates require the current
 Activity ID and ETag, use `If-Match`, and reject billed or invoiced entries.
 Deletion, trust transfers, permission changes, and bulk mutation are not implemented.
 
+Document uploads additionally require `ESQ_CLIO_UPLOAD_ROOT` to be an absolute,
+operator-approved staging directory. Uploads outside its resolved path and
+symbolic-link inputs are rejected. Matter lifecycle defaults use
+`ESQ_FIRM_TIMEZONE` (default `America/Toronto`) rather than the container's UTC
+calendar date.
+
 ### Billing (1 tool)
 
 | Tool | Inputs | What it does |

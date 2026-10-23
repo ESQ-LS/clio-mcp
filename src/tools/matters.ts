@@ -17,7 +17,7 @@ import {
 import { buildNewCustomFieldValues, buildUpdatedCustomFieldValues } from "../esq/customFieldValues.js";
 
 const MATTER_LIST_FIELDS =
-  "id,display_number,description,status,client{id,name},practice_area{id,name},open_date,close_date";
+  "id,display_number,description,status,client{id,name},practice_area{id,name},open_date,pending_date,close_date";
 
 const MATTER_DETAIL_FIELDS =
   "id,etag,display_number,description,status,client{id,name},practice_area{id,name},open_date,close_date,billable," +
@@ -96,6 +96,15 @@ function buildMatterData(input: Record<string, unknown>): Record<string, unknown
   return data;
 }
 
+export function firmCalendarDate(now = new Date()): string {
+  const timeZone = process.env.ESQ_FIRM_TIMEZONE?.trim() || "America/Toronto";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
 function buildMatterUpdateData(input: Record<string, unknown>, current: any): Record<string, unknown> {
   const data = buildMatterData(input);
   if (input.custom_field_values !== undefined) {
@@ -172,7 +181,7 @@ async function resolveMatterReferences(input: Record<string, unknown>, currentMa
 async function recordMatterMutation(
   tool: "create_matter" | "update_matter",
   confirmationState: "dry_run" | "confirmed",
-  outcome: "success" | "error",
+  outcome: "attempt" | "success" | "error",
   fieldsChanged: string[],
   matterId?: number,
   errorMessage?: string,
@@ -340,7 +349,7 @@ export function registerMatterTools(server: McpServer): void {
     async (input) => {
       const confirmationState = input.confirm_write ? "confirmed" : "dry_run";
       let writeAttempted = false;
-      const today = new Date().toISOString().slice(0, 10);
+      const today = firmCalendarDate();
       const normalized = {
         ...input,
         ...(input.status === "open" && input.open_date === undefined && { open_date: today }),
@@ -362,7 +371,7 @@ export function registerMatterTools(server: McpServer): void {
 
         if (!input.preview_token) throw new Error("preview_token is required when confirm_write is true.");
         await consumeWritePreviewToken(input.preview_token, "create_matter", proposal);
-        const preWriteAuditOk = await recordMatterMutation("create_matter", "confirmed", "success", fieldsChanged);
+        const preWriteAuditOk = await recordMatterMutation("create_matter", "confirmed", "attempt", fieldsChanged);
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;
         const response = await clioPost("/matters.json", { data });
@@ -448,7 +457,7 @@ export function registerMatterTools(server: McpServer): void {
         if (!input.preview_token) throw new Error("preview_token is required when confirm_write is true.");
         await consumeWritePreviewToken(input.preview_token, "update_matter", proposal);
         const preWriteAuditOk = await recordMatterMutation(
-          "update_matter", "confirmed", "success", fieldsChanged, input.matter_id,
+          "update_matter", "confirmed", "attempt", fieldsChanged, input.matter_id,
         );
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;

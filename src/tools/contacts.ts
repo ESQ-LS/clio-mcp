@@ -168,7 +168,14 @@ function buildContactUpdateData(input: Record<string, unknown>, current: any): R
     const entry = existingEntry(current.phone_numbers ?? [], "phone", false, input.phone_id as number | undefined);
     data.phone_numbers = [{ ...(entry && { id: entry.id }), name: entry?.name ?? "Work", number: input.phone }];
   }
-  if (data.addresses) {
+  if (input.addresses !== undefined) {
+    data.addresses = (input.addresses as Array<Record<string, unknown>>).map((changes) => {
+      const id = changes.id as number | undefined;
+      if (id === undefined) return changes;
+      const entry = existingEntry(current.addresses ?? [], "address", false, id);
+      return { ...entry, ...changes, id: entry.id };
+    });
+  } else if (data.addresses) {
     const entry = existingEntry(current.addresses ?? [], "address", false, input.address_id as number | undefined);
     const changes = (data.addresses as Record<string, unknown>[])[0];
     data.addresses = [{
@@ -180,6 +187,15 @@ function buildContactUpdateData(input: Record<string, unknown>, current: any): R
       ),
       ...changes,
       name: entry?.name ?? "Work",
+    }];
+  }
+  if (input.web_site !== undefined) {
+    const entry = existingEntry(current.web_sites ?? [], "website", false, input.web_site_id as number | undefined);
+    data.web_sites = [{
+      ...(entry && { id: entry.id }),
+      name: entry?.name ?? "Work",
+      address: input.web_site,
+      default_web_site: entry?.default_web_site ?? true,
     }];
   }
   return data;
@@ -197,7 +213,7 @@ async function validateContactCompany(companyId: unknown): Promise<{ id: number;
 async function recordContactMutation(
   tool: "create_contact" | "update_contact",
   confirmationState: "dry_run" | "confirmed",
-  outcome: "success" | "error",
+  outcome: "attempt" | "success" | "error",
   fieldsChanged: string[],
   recordId?: number,
   errorMessage?: string,
@@ -395,12 +411,15 @@ export function registerContactTools(server: McpServer): void {
         const proposal = { ...data, ...(company && { company }) };
 
         if (!input.confirm_write) {
-          const duplicateResponse = await clioGet("/contacts.json", {
-            query: input.email ?? input.name,
-            fields: CONTACT_LIST_FIELDS,
-            limit: "5",
-          });
-          const possibleDuplicates = (duplicateResponse?.data ?? []).map((c: any) => ({
+          const duplicateQueries = [...new Set([input.name, input.email].filter((value): value is string => Boolean(value)))];
+          const duplicateResponses = await Promise.all(duplicateQueries.map((query) => clioGet("/contacts.json", {
+            query, fields: CONTACT_LIST_FIELDS, limit: "5",
+          })));
+          const duplicateById = new Map<number, any>();
+          for (const response of duplicateResponses) {
+            for (const contact of response?.data ?? []) duplicateById.set(contact.id, contact);
+          }
+          const possibleDuplicates = [...duplicateById.values()].map((c: any) => ({
             id: c.id, name: c.name, type: c.type, email: c.email_addresses?.[0]?.address ?? null,
           }));
           const auditOk = await recordContactMutation("create_contact", "dry_run", "success", fieldsChanged);
@@ -415,7 +434,7 @@ export function registerContactTools(server: McpServer): void {
 
         if (!input.preview_token) throw new Error("preview_token is required when confirm_write is true.");
         await consumeWritePreviewToken(input.preview_token, "create_contact", proposal);
-        const preWriteAuditOk = await recordContactMutation("create_contact", "confirmed", "success", fieldsChanged);
+        const preWriteAuditOk = await recordContactMutation("create_contact", "confirmed", "attempt", fieldsChanged);
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;
         const response = await clioPost("/contacts.json", { data });
@@ -455,6 +474,7 @@ export function registerContactTools(server: McpServer): void {
         email_id: z.number().int().positive().optional().describe("Existing email entry ID; use to select among multiple entries"),
         phone_id: z.number().int().positive().optional().describe("Existing phone entry ID; use to select among multiple entries"),
         address_id: z.number().int().positive().optional().describe("Existing address entry ID; use to select among multiple entries"),
+        web_site_id: z.number().int().positive().optional().describe("Existing website entry ID; use to select among multiple entries"),
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },
@@ -468,7 +488,8 @@ export function registerContactTools(server: McpServer): void {
         if (fieldsChanged.length === 0) throw new Error("At least one contact field must be supplied.");
         if ((input.email_id !== undefined && input.email === undefined) ||
             (input.phone_id !== undefined && input.phone === undefined) ||
-            (input.address_id !== undefined && !fieldsChanged.includes("addresses"))) {
+            (input.address_id !== undefined && !fieldsChanged.includes("addresses")) ||
+            (input.web_site_id !== undefined && input.web_site === undefined)) {
           throw new Error("An entry selector requires changes to that entry.");
         }
         const company = await validateContactCompany(input.company_id);
@@ -507,7 +528,7 @@ export function registerContactTools(server: McpServer): void {
         if (!input.preview_token) throw new Error("preview_token is required when confirm_write is true.");
         await consumeWritePreviewToken(input.preview_token, "update_contact", proposal);
         const preWriteAuditOk = await recordContactMutation(
-          "update_contact", "confirmed", "success", fieldsChanged, input.contact_id,
+          "update_contact", "confirmed", "attempt", fieldsChanged, input.contact_id,
         );
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;

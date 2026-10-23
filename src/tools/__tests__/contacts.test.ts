@@ -111,6 +111,20 @@ describe("controlled contact writes", () => {
     });
   });
 
+  it("searches both name and email for duplicates and deduplicates by ID", async () => {
+    mockClioGet
+      .mockResolvedValueOnce({ data: [{ id: 9, name: "Synthetic Co", type: "Company", email_addresses: [] }] })
+      .mockResolvedValueOnce({ data: [
+        { id: 9, name: "Synthetic Co", type: "Company", email_addresses: [] },
+        { id: 10, name: "Other", type: "Company", email_addresses: [{ address: "intake@example.com" }] },
+      ] });
+    const preview = JSON.parse((await getHandlers().create_contact({
+      type: "Company", name: "Synthetic Co", email: "intake@example.com",
+    })).content[0].text);
+    expect(mockClioGet.mock.calls.map((call) => call[1].query)).toEqual(["Synthetic Co", "intake@example.com"]);
+    expect(preview.possible_duplicates.map((contact: any) => contact.id)).toEqual([9, 10]);
+  });
+
   it("includes ordinary profile and custom fields in an unchanged create", async () => {
     mockClioGet.mockResolvedValue({ data: [] });
     mockClioPost.mockResolvedValue({ data: { id: 44, name: "Synthetic Person", type: "Person" } });
@@ -193,6 +207,41 @@ describe("controlled contact writes", () => {
       phone_numbers: [{ id: 12, name: "Home", number: "4165550100" }],
       addresses: [{ id: 13, name: "Home", street: "1 Test Street", city: "Ottawa", country: "Canada" }],
     } }, { "If-Match": "contact-v1" });
+  });
+
+  it("updates the selected website instead of creating a duplicate", async () => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",
+      web_sites: [{ id: 21, name: "Work", address: "https://old.example.test", default_web_site: true }],
+    } });
+    const handlers = getHandlers();
+    const preview = JSON.parse((await handlers.update_contact({
+      contact_id: 42, web_site: "https://new.example.test",
+    })).content[0].text);
+    expect(preview.proposal.changes.web_sites).toEqual([{
+      id: 21, name: "Work", address: "https://new.example.test", default_web_site: true,
+    }]);
+  });
+
+  it("preserves every requested address update and validates IDs", async () => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",
+      addresses: [
+        { id: 31, name: "Work", street: "1 Old Street", city: "Toronto" },
+        { id: 32, name: "Home", street: "2 Old Street", city: "Ottawa" },
+      ],
+    } });
+    const preview = JSON.parse((await getHandlers().update_contact({
+      contact_id: 42,
+      addresses: [
+        { id: 31, name: "Work", city: "Hamilton" },
+        { id: 32, name: "Home", city: "Kingston" },
+      ],
+    })).content[0].text);
+    expect(preview.proposal.changes.addresses).toEqual([
+      { id: 31, name: "Work", street: "1 Old Street", city: "Hamilton" },
+      { id: 32, name: "Home", street: "2 Old Street", city: "Kingston" },
+    ]);
   });
 
   it("updates an existing custom field by its composite value ID", async () => {
