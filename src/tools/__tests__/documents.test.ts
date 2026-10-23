@@ -39,6 +39,9 @@ describe("controlled document upload", () => {
     expect(preview.proposal.document).toMatchObject({ name: "synthetic.txt", content_type: "text/plain", size: 19 });
     expect(preview.proposal.document.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(mockClioPost).not.toHaveBeenCalled();
-    expect(JSON.stringify(mockAppendAuditLog.mock.calls)).not.toContain(filePath);
+    const audit = JSON.stringify(mockAppendAuditLog.mock.calls);
+    expect(audit).not.toContain(filePath);
+    expect(audit).not.toContain("synthetic.txt");
+    expect(audit).not.toContain(preview.proposal.document.sha256);
   });
 });

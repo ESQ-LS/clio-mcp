@@ -152,7 +152,7 @@ export function registerCalendarTools(server: McpServer): void {
         if (!confirm_write) {
           const auditOk = await appendAuditLog({
             tool: "create_calendar_entry", action: "create", confirmation_state: "dry_run",
-            args: { confirm_write: false, summary, start_at, end_at, calendar_owner_id, matter_id, send_email_notification: send_email_notification ?? false },
+            args: { confirm_write: false, start_at, end_at, calendar_owner_id, matter_id, send_email_notification: send_email_notification ?? false },
             outcome: "success", ...(matter_id && { matter_id }),
           });
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
@@ -165,7 +165,7 @@ export function registerCalendarTools(server: McpServer): void {
         await consumeWritePreviewToken(preview_token, "create_calendar_entry", proposal);
         const preWriteAuditOk = await appendAuditLog({
           tool: "create_calendar_entry", action: "create", confirmation_state: "confirmed",
-          args: { confirm_write: true, summary, start_at, end_at, calendar_owner_id, matter_id, send_email_notification: send_email_notification ?? false },
+          args: { confirm_write: true, start_at, end_at, calendar_owner_id, matter_id, send_email_notification: send_email_notification ?? false },
           outcome: "success", ...(matter_id && { matter_id }),
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
@@ -174,7 +174,7 @@ export function registerCalendarTools(server: McpServer): void {
         const data = await clioPost("/calendar_entries.json", { data: body });
         const entry = data.data as any;
 
-        await appendAuditLog({ tool: "create_calendar_entry", action: "create", confirmation_state: "confirmed", args: { confirm_write: true, summary, start_at, end_at, calendar_owner_id, matter_id }, outcome: "success", ...(matter_id && { matter_id }) });
+        await appendAuditLog({ tool: "create_calendar_entry", action: "create", confirmation_state: "confirmed", args: { confirm_write: true, start_at, end_at, calendar_owner_id, matter_id }, outcome: "success", ...(matter_id && { matter_id }) });
 
         const result = {
           id: entry.id,
@@ -189,7 +189,7 @@ export function registerCalendarTools(server: McpServer): void {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err: any) {
         const message = safeWriteError(err);
-        await appendAuditLog({ tool: "create_calendar_entry", action: "create", confirmation_state: confirm_write ? "confirmed" : "dry_run", args: { confirm_write, summary, start_at, end_at, calendar_owner_id, matter_id }, outcome: "error", error_message: message, ...(matter_id && { matter_id }) });
+        await appendAuditLog({ tool: "create_calendar_entry", action: "create", confirmation_state: confirm_write ? "confirmed" : "dry_run", args: { confirm_write, start_at, end_at, calendar_owner_id, matter_id }, outcome: "error", error_message: message, ...(matter_id && { matter_id }) });
         return writeJsonResult({
           error: message,
           write_performed: writeAttempted ? "unknown" : false,

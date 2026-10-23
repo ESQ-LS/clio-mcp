@@ -127,7 +127,7 @@ export function registerTaskTools(server: McpServer): void {
         if (!confirm_write) {
           const auditOk = await appendAuditLog({
             tool: "create_task", action: "create", confirmation_state: "dry_run",
-            args: { confirm_write: false, matter_id, name, priority, due_date, assignee_id }, outcome: "success", matter_id,
+            args: { confirm_write: false, matter_id, priority, due_date, assignee_id }, outcome: "success", matter_id,
           });
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
           return writeJsonResult(writePreviewEnvelope(
@@ -138,7 +138,7 @@ export function registerTaskTools(server: McpServer): void {
         await consumeWritePreviewToken(preview_token, "create_task", proposal);
         const preWriteAuditOk = await appendAuditLog({
           tool: "create_task", action: "create", confirmation_state: "confirmed",
-          args: { confirm_write: true, matter_id, name, priority, due_date, assignee_id }, outcome: "success", matter_id,
+          args: { confirm_write: true, matter_id, priority, due_date, assignee_id }, outcome: "success", matter_id,
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;
@@ -149,7 +149,7 @@ export function registerTaskTools(server: McpServer): void {
         await appendAuditLog({
           tool: "create_task",
           action: "create", confirmation_state: "confirmed",
-          args: { confirm_write: true, matter_id, name, priority, due_date, assignee_id },
+          args: { confirm_write: true, matter_id, priority, due_date, assignee_id },
           outcome: "success",
           matter_id,
         });
@@ -174,7 +174,7 @@ export function registerTaskTools(server: McpServer): void {
         await appendAuditLog({
           tool: "create_task",
           action: "create", confirmation_state: confirm_write ? "confirmed" : "dry_run",
-          args: { confirm_write, matter_id, name, priority, due_date, assignee_id },
+          args: { confirm_write, matter_id, priority, due_date, assignee_id },
           outcome: "error",
           error_message: message,
           matter_id,

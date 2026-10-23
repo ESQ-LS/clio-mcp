@@ -148,7 +148,7 @@ export function registerCommunicationTools(server: McpServer): void {
         if (!confirm_write) {
           const auditOk = await appendAuditLog({
             tool: "create_communication", action: "create", confirmation_state: "dry_run",
-            args: { confirm_write: false, matter_id, type, subject, received_at, participant_count: senders.length + receivers.length },
+            args: { confirm_write: false, matter_id, type, received_at, participant_count: senders.length + receivers.length },
             outcome: "success", matter_id,
           });
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
@@ -161,7 +161,7 @@ export function registerCommunicationTools(server: McpServer): void {
         await consumeWritePreviewToken(preview_token, "create_communication", proposal);
         const preWriteAuditOk = await appendAuditLog({
           tool: "create_communication", action: "create", confirmation_state: "confirmed",
-          args: { confirm_write: true, matter_id, type, subject, received_at, participant_count: senders.length + receivers.length },
+          args: { confirm_write: true, matter_id, type, received_at, participant_count: senders.length + receivers.length },
           outcome: "success", matter_id,
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
@@ -170,7 +170,7 @@ export function registerCommunicationTools(server: McpServer): void {
         if (!response?.data?.id) throw new Error("Clio returned an invalid create response.");
         const auditOk = await appendAuditLog({
           tool: "create_communication", action: "create", confirmation_state: "confirmed",
-          args: { confirm_write: true, matter_id, type, subject, received_at }, outcome: "success", matter_id,
+          args: { confirm_write: true, matter_id, type, received_at }, outcome: "success", matter_id,
           record_id: response.data.id,
         });
         return writeJsonResult({ mode: "confirmed_write", write_performed: true, action: "create_communication", record_id: response.data.id, audit_recorded: auditOk, communication: response.data });
@@ -178,7 +178,7 @@ export function registerCommunicationTools(server: McpServer): void {
         const message = safeWriteError(error);
         await appendAuditLog({
           tool: "create_communication", action: "create", confirmation_state: confirm_write ? "confirmed" : "dry_run",
-          args: { confirm_write, matter_id, type, subject, received_at }, outcome: "error", error_message: message, matter_id,
+          args: { confirm_write, matter_id, type, received_at }, outcome: "error", error_message: message, matter_id,
         });
         return writeJsonResult({ error: message, write_performed: writeAttempted ? "unknown" : false }, true);
       }

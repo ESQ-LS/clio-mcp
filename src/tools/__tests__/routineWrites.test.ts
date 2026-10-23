@@ -29,7 +29,7 @@ beforeEach(() => {
 });
 
 describe("routine preview-controlled writes", () => {
-  it("previews and confirms a matter note without logging the body", async () => {
+  it("previews and confirms a matter note without logging its subject or body", async () => {
     mockClioGet.mockResolvedValue({ data: { id: 99, display_number: "00099-001", description: "Synthetic", status: "open" } });
     mockClioPost.mockResolvedValue({ data: { id: 7, subject: "Synthetic note" } });
     const handlers = handlersFor(registerNoteTools);
@@ -38,7 +38,9 @@ describe("routine preview-controlled writes", () => {
     expect(mockClioPost).not.toHaveBeenCalled();
     await handlers.create_note({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledWith("/notes.json", { data: expect.objectContaining({ subject: "Synthetic note", detail: args.body }) });
-    expect(JSON.stringify(mockAppendAuditLog.mock.calls)).not.toContain(args.body);
+    const audit = JSON.stringify(mockAppendAuditLog.mock.calls);
+    expect(audit).not.toContain(args.subject);
+    expect(audit).not.toContain(args.body);
   });
 
   it("previews notification consequences before creating a calendar entry", async () => {
@@ -56,6 +58,7 @@ describe("routine preview-controlled writes", () => {
     expect(mockClioPost).not.toHaveBeenCalled();
     await handlers.create_calendar_entry({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledOnce();
+    expect(JSON.stringify(mockAppendAuditLog.mock.calls)).not.toContain(args.summary);
   });
 
   it("logs a communication without sending an external message", async () => {
@@ -72,5 +75,8 @@ describe("routine preview-controlled writes", () => {
     expect(preview.proposal.sends_external_message).toBe(false);
     await handlers.create_communication({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledWith("/communications.json", { data: expect.objectContaining({ matter: { id: 99 }, type: "PhoneCommunication" }) });
+    const audit = JSON.stringify(mockAppendAuditLog.mock.calls);
+    expect(audit).not.toContain(args.subject);
+    expect(audit).not.toContain(args.body);
   });
 });

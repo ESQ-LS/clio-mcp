@@ -37,7 +37,7 @@ export function registerNoteTools(server: McpServer): void {
         if (!confirm_write) {
           const auditOk = await appendAuditLog({
             tool: "create_note", action: "create", confirmation_state: "dry_run",
-            args: { confirm_write: false, matter_id, subject }, outcome: "success", matter_id,
+            args: { confirm_write: false, matter_id }, outcome: "success", matter_id,
           });
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
           return writeJsonResult(writePreviewEnvelope(
@@ -48,7 +48,7 @@ export function registerNoteTools(server: McpServer): void {
         await consumeWritePreviewToken(preview_token, "create_note", proposal);
         const preWriteAuditOk = await appendAuditLog({
           tool: "create_note", action: "create", confirmation_state: "confirmed",
-          args: { confirm_write: true, matter_id, subject }, outcome: "success", matter_id,
+          args: { confirm_write: true, matter_id }, outcome: "success", matter_id,
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio write was attempted.");
         writeAttempted = true;
@@ -66,7 +66,7 @@ export function registerNoteTools(server: McpServer): void {
         await appendAuditLog({
           tool: "create_note",
           action: "create", confirmation_state: "confirmed",
-          args: { confirm_write: true, matter_id, subject },
+          args: { confirm_write: true, matter_id },
           outcome: "success",
           matter_id,
         });
@@ -89,7 +89,7 @@ export function registerNoteTools(server: McpServer): void {
         await appendAuditLog({
           tool: "create_note",
           action: "create", confirmation_state: confirm_write ? "confirmed" : "dry_run",
-          args: { confirm_write, matter_id, subject },
+          args: { confirm_write, matter_id },
           outcome: "error",
           error_message: message,
           matter_id,

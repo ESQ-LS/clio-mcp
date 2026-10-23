@@ -54,6 +54,9 @@ describe("controlled task writes", () => {
       name: "Draft contract", description: "Synthetic task", priority: "Normal", due_at: "2026-01-15T00:00:00Z",
       matter: { id: 99 }, assignee: { id: 42, type: "User" },
     } });
+    const audit = JSON.stringify(mockAppendAuditLog.mock.calls);
+    expect(audit).not.toContain(args.name);
+    expect(audit).not.toContain(args.description);
   });
 
   it("previews and conditionally updates a task", async () => {

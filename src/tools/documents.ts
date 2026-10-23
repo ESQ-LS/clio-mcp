@@ -246,7 +246,7 @@ export function registerDocumentTools(server: McpServer): void {
           const auditOk = await appendAuditLog({
             tool: "upload_document", action: "create", confirmation_state: "dry_run",
             outcome: "success", matter_id,
-            args: { confirm_write: false, name: docName, size: totalSize, sha256 },
+            args: { confirm_write: false, matter_id, size: totalSize },
           });
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
           return writeJsonResult(writePreviewEnvelope(
@@ -259,7 +259,7 @@ export function registerDocumentTools(server: McpServer): void {
         const preWriteAuditOk = await appendAuditLog({
           tool: "upload_document", action: "create", confirmation_state: "confirmed",
           outcome: "success", matter_id,
-          args: { confirm_write: true, name: docName, size: totalSize, sha256 },
+          args: { confirm_write: true, matter_id, size: totalSize },
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio upload was attempted.");
         writeAttempted = true;
@@ -332,7 +332,7 @@ export function registerDocumentTools(server: McpServer): void {
           tool: "upload_document",
           action: "create",
           confirmation_state: "confirmed",
-          args: { confirm_write: true, matter_id, name: docName, size: totalSize, sha256 },
+          args: { confirm_write: true, matter_id, size: totalSize },
           outcome: "success",
           matter_id,
         });
@@ -349,7 +349,7 @@ export function registerDocumentTools(server: McpServer): void {
           tool: "upload_document",
           action: "create",
           confirmation_state: confirm_write ? "confirmed" : "dry_run",
-          args: { confirm_write, matter_id, name },
+          args: { confirm_write, matter_id },
           outcome: "error",
           error_message: message,
           matter_id,
