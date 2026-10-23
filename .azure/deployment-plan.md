@@ -179,8 +179,9 @@ Restore the prior immutable image `esqdocxmcpacr.azurecr.io/esq-clio-mcp:esq-494
 
 ## 11. Proposed solo-practice routine-write release (2026-10-23)
 
-Status: source implemented and locally validated; not committed, merged, enabled,
-or deployed.
+Status: source implemented, locally validated, committed, and pushed in
+[PR #14](https://github.com/ESQ-LS/clio-mcp/pull/14); not merged, enabled, or
+deployed.
 
 The proposed production allowlist is exact and intentionally excludes the broad
 legacy activity handlers:
@@ -204,7 +205,8 @@ Release gates:
 - [x] Production dependency audit reports zero vulnerabilities.
 - [x] Manifest test proves the exact routine-write allowlist and excludes the
   legacy broad activity handlers.
-- [ ] Commit, push, and pull-request review are separately authorized.
+- [x] Commit and push the superseding pull request under separate authorization.
+- [ ] Complete pull-request code and security review against the current head.
 - [ ] Current Azure target, image, revision, and rollback image are re-read.
 - [ ] Current Clio developer-app permissions are verified for every selected
   resource before enabling the allowlist.

@@ -7,8 +7,9 @@ routine writes while reserving destructive, financial, trust, permission, and
 bulk operations for Clio's native interface.
 
 Initial implementation: [PR #13](https://github.com/ESQ-LS/clio-mcp/pull/13).
-The expanded solo-practice implementation is on
-`codex/solo-write-capabilities`; its superseding pull request is the next gate.
+The expanded solo-practice implementation is in superseding
+[PR #14](https://github.com/ESQ-LS/clio-mcp/pull/14) on
+`codex/solo-write-capabilities`.
 GitHub Issues is disabled in this repository, so this file is the project tracker.
 
 ## Delivery checklist
@@ -30,14 +31,15 @@ GitHub Issues is disabled in this repository, so this file is the project tracke
   - [x] Complete regression tests and sync the hardening changes to GitHub.
 - [x] Step 2: complete focused and full regression coverage and review the
   expanded branch.
-- [ ] Step 3: open or update a PR, merge only after approval, select exact tools
-  in `ESQ_WRITE_TOOLS`, and redeploy only with separate authorization.
-- [ ] Step 4: refresh the plugin catalog and verify discovery and write authorization.
-- [ ] Step 5: test with labelled test contacts and a pending matter; verify creation,
+- [x] Step 3: commit, push, and open the superseding pull request.
+- [ ] Step 4: complete review, merge only after approval, select exact tools in
+  `ESQ_WRITE_TOOLS`, and redeploy only with separate authorization.
+- [ ] Step 5: refresh the plugin catalog and verify discovery and write authorization.
+- [ ] Step 6: test with labelled test contacts and a pending matter; verify creation,
   updates, duplicates, expired/reused tokens, stale records, and audit entries.
-- [ ] Step 6: connect form invitations and responses using a unique intake reference
+- [ ] Step 7: connect form invitations and responses using a unique intake reference
   linking the Clio matter, form invitation, response, and SharePoint documents.
-- [ ] Step 7: evaluate an intake review dashboard after the workflow works end to end.
+- [ ] Step 8: evaluate an intake review dashboard after the workflow works end to end.
 
 ## Boundaries and release notes
 
@@ -57,5 +59,5 @@ No live Clio records are required to complete step 1.
 Expanded-branch validation: 19 test files / 134 tests passed; the production
 TypeScript build, full dependency audit (zero vulnerabilities), and
 `git diff --check` passed. Tests use synthetic records and mocked API calls.
-Next action: review the superseding pull request; do not merge or deploy without
-separate authorization.
+Next action: complete review of PR #14; do not merge or deploy without separate
+authorization.
