@@ -181,10 +181,18 @@ function buildContactUpdateData(input: Record<string, unknown>, current: any): R
       address: input.email,
       default_email: entry?.default_email ?? true,
     }];
+  } else if (input.email_addresses !== undefined) {
+    data.email_addresses = validatePluralContactEntries(
+      input.email_addresses, current.email_addresses ?? [], "email",
+    );
   }
   if (input.phone !== undefined) {
     const entry = existingEntry(current.phone_numbers ?? [], "phone", false, input.phone_id as number | undefined);
     data.phone_numbers = [{ ...(entry && { id: entry.id }), name: entry?.name ?? "Work", number: input.phone }];
+  } else if (input.phone_numbers !== undefined) {
+    data.phone_numbers = validatePluralContactEntries(
+      input.phone_numbers, current.phone_numbers ?? [], "phone",
+    );
   }
   if (input.addresses !== undefined) {
     data.addresses = (input.addresses as Array<Record<string, unknown>>).map((changes) => {
@@ -215,8 +223,25 @@ function buildContactUpdateData(input: Record<string, unknown>, current: any): R
       address: input.web_site,
       default_web_site: entry?.default_web_site ?? true,
     }];
+  } else if (input.web_sites !== undefined) {
+    data.web_sites = validatePluralContactEntries(
+      input.web_sites, current.web_sites ?? [], "website",
+    );
   }
   return data;
+}
+
+function validatePluralContactEntries(
+  changes: unknown,
+  currentEntries: any[],
+  kind: string,
+): Array<Record<string, unknown>> {
+  return (changes as Array<Record<string, unknown>>).map((entryChanges) => {
+    const id = entryChanges.id as number | undefined;
+    if (id === undefined) return entryChanges;
+    const current = existingEntry(currentEntries, kind, false, id);
+    return { ...current, ...entryChanges, id: current.id };
+  });
 }
 
 async function validateContactCompany(companyId: unknown): Promise<{ id: number; name: string } | null> {

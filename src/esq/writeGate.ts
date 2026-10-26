@@ -53,7 +53,7 @@ function parseEnabled(): Set<string> {
     enabled.add(name);
   }
   const mode = (process.env.TRANSPORT ?? "http").trim().toLowerCase();
-  if (enabled.size > 0 && mode === "http" && !process.env.MCP_API_KEY?.trim()) {
+  if (enabled.size > 0 && mode !== "stdio" && !process.env.MCP_API_KEY?.trim()) {
     console.error("[esq] Refusing to expose write tools over HTTP without MCP_API_KEY.");
     return new Set();
   }

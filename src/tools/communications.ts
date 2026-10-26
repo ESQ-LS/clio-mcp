@@ -132,9 +132,15 @@ export function registerCommunicationTools(server: McpServer): void {
         const matter = (await clioGet(`/matters/${matter_id}.json`, { fields: "id,display_number,description,status" }))?.data;
         if (matter?.id !== matter_id) throw new Error("Matter validation failed.");
         const validatedParticipants = [];
+        const participantCache = new Map<string, { id: number; name: string }>();
         for (const participant of [...senders, ...receivers]) {
           const endpoint = participant.type === "User" ? "users" : "contacts";
-          const record = (await clioGet(`/${endpoint}/${participant.id}.json`, { fields: "id,name" }))?.data;
+          const cacheKey = `${participant.type}:${participant.id}`;
+          let record = participantCache.get(cacheKey);
+          if (!record) {
+            record = (await clioGet(`/${endpoint}/${participant.id}.json`, { fields: "id,name" }))?.data;
+            if (record?.id === participant.id) participantCache.set(cacheKey, record);
+          }
           if (record?.id !== participant.id) throw new Error(`${participant.type} ${participant.id} validation failed.`);
           validatedParticipants.push({ ...participant, name: record.name });
         }

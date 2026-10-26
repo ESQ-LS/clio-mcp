@@ -354,16 +354,17 @@ export function registerMatterTools(server: McpServer): void {
     async (input) => {
       const confirmationState = input.confirm_write ? "confirmed" : "dry_run";
       let writeAttempted = false;
-      const today = firmCalendarDate();
-      const normalized = {
-        ...input,
-        ...(input.status === "open" && input.open_date === undefined && { open_date: today }),
-        ...(input.status === "pending" && input.pending_date === undefined && { pending_date: today }),
-        ...(input.status === "closed" && input.close_date === undefined && { close_date: today }),
-      };
-      const data = buildMatterData(normalized);
-      const fieldsChanged = Object.keys(data);
+      let fieldsChanged: string[] = [];
       try {
+        const today = firmCalendarDate();
+        const normalized = {
+          ...input,
+          ...(input.status === "open" && input.open_date === undefined && { open_date: today }),
+          ...(input.status === "pending" && input.pending_date === undefined && { pending_date: today }),
+          ...(input.status === "closed" && input.close_date === undefined && { close_date: today }),
+        };
+        const data = buildMatterData(normalized);
+        fieldsChanged = Object.keys(data);
         const references = await resolveMatterReferences(normalized);
         const proposal = { ...data, ...references };
         if (!input.confirm_write) {
@@ -421,9 +422,10 @@ export function registerMatterTools(server: McpServer): void {
     async (input) => {
       const confirmationState = input.confirm_write ? "confirmed" : "dry_run";
       let writeAttempted = false;
-      let data = buildMatterData(input);
-      const fieldsChanged = Object.keys(data);
+      let fieldsChanged: string[] = [];
       try {
+        let data = buildMatterData(input);
+        fieldsChanged = Object.keys(data);
         if (fieldsChanged.length === 0) throw new Error("At least one matter field must be supplied.");
         const currentResponse = await clioGet(`/matters/${input.matter_id}.json`, {
           fields: MATTER_DETAIL_FIELDS,

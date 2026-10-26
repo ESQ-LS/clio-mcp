@@ -80,6 +80,21 @@ describe("controlled document upload", () => {
     await fs.rm(outsideDir, { recursive: true, force: true });
   });
 
+  it("rejects files above Clio's limit before copying or hashing them", async () => {
+    const filePath = path.join(tempDir, "oversized.bin");
+    await fs.writeFile(filePath, "");
+    await fs.truncate(filePath, 5 * 1024 * 1024 * 1024 + 1);
+    const openSpy = vi.spyOn(fs, "open");
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const result = await handlers.upload_document({ file_path: filePath, matter_id: 99 });
+    expect(JSON.parse(result.content[0].text).error).toContain("5 GB document limit");
+    expect(openSpy.mock.results.filter(({ value }) => value && typeof value === "object")).toHaveLength(1);
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPost).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
   it("uploads the immutable snapshot that matched the preview", async () => {
     const filePath = path.join(tempDir, "synthetic.txt");
     await fs.writeFile(filePath, "approved bytes");
@@ -103,6 +118,33 @@ describe("controlled document upload", () => {
     const confirmed = await handlers.upload_document({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(confirmed.isError).not.toBe(true);
     expect(Buffer.concat(uploaded).toString()).toBe("approved bytes");
+    vi.unstubAllGlobals();
+  });
+
+  it("does not replace a successful upload result when snapshot cleanup fails", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    mockClioPost.mockResolvedValue({ data: { id: 7, latest_document_version: {
+      uuid: "synthetic-version", multiparts: [{ part_number: 1, put_url: "https://upload.test", put_headers: [] }],
+    } } });
+    mockClioPatch.mockResolvedValue({ data: { id: 7 } });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const args = { file_path: filePath, matter_id: 99 };
+    const preview = JSON.parse((await handlers.upload_document(args)).content[0].text);
+    const originalRm = fs.rm.bind(fs);
+    const rmSpy = vi.spyOn(fs, "rm").mockImplementationOnce(async (...rmArgs) => {
+      await originalRm(...rmArgs);
+      throw new Error("synthetic cleanup failure");
+    }).mockImplementation(originalRm);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const result = await handlers.upload_document({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ document_id: 7, uuid: "synthetic-version" });
+    expect(errorSpy).toHaveBeenCalledWith("[esq] Failed to remove a temporary Clio upload snapshot.");
+    rmSpy.mockRestore();
+    errorSpy.mockRestore();
     vi.unstubAllGlobals();
   });
 

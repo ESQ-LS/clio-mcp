@@ -24,6 +24,7 @@ const DOCUMENT_DETAIL_FIELDS =
 
 const PART_SIZE = 10 * 1024 * 1024; // 10 MB — above S3's 5 MB minimum
 const MAX_PARTS_PER_REQUEST = 50;
+const MAX_DOCUMENT_SIZE = 5 * 1024 * 1024 * 1024;
 
 const MIME_MAP: Record<string, string> = {
   pdf: "application/pdf",
@@ -95,6 +96,9 @@ async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSna
     sourceHandle = await fs.open(approvedFile, constants.O_RDONLY | constants.O_NOFOLLOW);
     const sourceStats = await sourceHandle.stat();
     if (!sourceStats.isFile()) throw new Error("file_path must identify a regular file.");
+    if (sourceStats.size > MAX_DOCUMENT_SIZE) {
+      throw new Error("file_path exceeds Clio's 5 GB document limit.");
+    }
     await pipeline(
       sourceHandle.createReadStream({ autoClose: false }),
       createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }),
@@ -413,7 +417,11 @@ export function registerDocumentTools(server: McpServer): void {
           ...(writeAttempted && { recovery: "Search the target Clio matter for the proposed document before retrying; the upload outcome may be ambiguous." }),
         }, true);
       } finally {
-        await snapshot?.cleanup();
+        try {
+          await snapshot?.cleanup();
+        } catch {
+          console.error("[esq] Failed to remove a temporary Clio upload snapshot.");
+        }
       }
     }
   );

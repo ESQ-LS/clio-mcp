@@ -65,6 +65,13 @@ describe("ESQ controlled time-entry write gate", () => {
     expect(registeredWith("create_contact,update_matter", "http")).toEqual(["list_time_entries"]);
   });
 
+  it.each(["", "unexpected"])(
+    "fails closed for the HTTP fallback transport %j without an MCP API key",
+    (transport) => {
+      expect(registeredWith("create_contact,update_matter", transport)).toEqual(["list_time_entries"]);
+    },
+  );
+
   it("permits allowlisted HTTP writes when MCP authentication is configured", () => {
     expect(registeredWith("create_contact,update_matter", "http", "synthetic-api-key")).toEqual([
       "list_time_entries", "create_contact", "update_matter",

@@ -269,6 +269,38 @@ describe("controlled contact writes", () => {
     ]);
   });
 
+  it("validates IDs in every plural contact association", async () => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",
+      email_addresses: [{ id: 11, name: "Work", address: "old@example.test", default_email: true }],
+      phone_numbers: [{ id: 12, name: "Mobile", number: "4165550000", default_number: true }],
+      web_sites: [{ id: 13, name: "Work", address: "https://old.example.test", default_web_site: true }],
+    } });
+    const handlers = getHandlers();
+    const preview = JSON.parse((await handlers.update_contact({
+      contact_id: 42,
+      email_addresses: [{ id: 11, name: "Work", address: "new@example.test" }],
+      phone_numbers: [{ id: 12, name: "Mobile", number: "4165550100" }],
+      web_sites: [{ id: 13, name: "Work", address: "https://new.example.test" }],
+    })).content[0].text);
+    expect(preview.proposal.changes).toMatchObject({
+      email_addresses: [{ id: 11, address: "new@example.test", default_email: true }],
+      phone_numbers: [{ id: 12, number: "4165550100", default_number: true }],
+      web_sites: [{ id: 13, address: "https://new.example.test", default_web_site: true }],
+    });
+
+    for (const changes of [
+      { email_addresses: [{ id: 999, name: "Work", address: "new@example.test" }] },
+      { phone_numbers: [{ id: 999, name: "Mobile", number: "4165550100" }] },
+      { web_sites: [{ id: 999, name: "Work", address: "https://new.example.test" }] },
+    ]) {
+      const result = await handlers.update_contact({ contact_id: 42, ...changes });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("does not belong to this contact");
+    }
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
   it("updates an existing custom field by its composite value ID", async () => {
     const current = { data: {
       id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",

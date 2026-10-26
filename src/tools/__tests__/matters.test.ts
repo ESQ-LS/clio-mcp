@@ -60,6 +60,7 @@ const CREATE_ARGS = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  delete process.env.ESQ_FIRM_TIMEZONE;
   process.env.ENCRYPTION_KEY = "1".repeat(64);
   mockAppendAuditLog.mockResolvedValue(true);
   mockClioGet.mockResolvedValue(CLIENT);
@@ -71,6 +72,41 @@ describe("controlled matter writes", () => {
   it("derives lifecycle dates in the configured firm timezone", () => {
     process.env.ESQ_FIRM_TIMEZONE = "America/Toronto";
     expect(firmCalendarDate(new Date("2026-10-24T01:00:00Z"))).toBe("2026-10-23");
+  });
+
+  it("returns and audits a structured error for an invalid firm timezone", async () => {
+    process.env.ESQ_FIRM_TIMEZONE = "Invalid/Synthetic";
+    const result = await handlers.create_matter({
+      client_id: 1,
+      description: "Synthetic pending intake",
+      status: "pending",
+      billable: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ write_performed: false });
+    expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      tool: "create_matter", outcome: "error",
+    }));
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
+  it("returns and audits structured errors for duplicate matter custom fields", async () => {
+    const custom_field_values = [
+      { custom_field_id: 8001, value: "A" },
+      { custom_field_id: 8001, value: "B" },
+    ];
+    const created = await handlers.create_matter({ ...CREATE_ARGS, custom_field_values });
+    const updated = await handlers.update_matter({ matter_id: 42, custom_field_values });
+    expect(created.isError).toBe(true);
+    expect(updated.isError).toBe(true);
+    expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      tool: "create_matter", outcome: "error",
+    }));
+    expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      tool: "update_matter", outcome: "error",
+    }));
+    expect(mockClioPost).not.toHaveBeenCalled();
+    expect(mockClioPatch).not.toHaveBeenCalled();
   });
 
   it("requests pending_date when listing matters", async () => {

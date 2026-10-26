@@ -95,4 +95,25 @@ describe("routine preview-controlled writes", () => {
     expect(audit).not.toContain(args.subject);
     expect(audit).not.toContain(args.body);
   });
+
+  it("validates each distinct communication participant only once per request", async () => {
+    mockClioGet.mockImplementation(async (path: string) => {
+      if (path === "/matters/99.json") return { data: { id: 99, display_number: "00099-001", description: "Synthetic", status: "open" } };
+      if (path === "/users/42.json") return { data: { id: 42, name: "Synthetic Lawyer" } };
+      if (path === "/contacts/77.json") return { data: { id: 77, name: "Synthetic Client" } };
+      throw new Error(`unexpected path ${path}`);
+    });
+    const handlers = handlersFor(registerCommunicationTools);
+    await handlers.create_communication({
+      matter_id: 99,
+      type: "EmailCommunication",
+      subject: "Synthetic email",
+      body: "Synthetic summary",
+      received_at: "2026-10-23T10:00:00-04:00",
+      senders: [{ id: 42, type: "User" }, { id: 42, type: "User" }],
+      receivers: [{ id: 77, type: "Contact" }, { id: 42, type: "User" }, { id: 77, type: "Contact" }],
+    });
+    expect(mockClioGet.mock.calls.filter(([path]) => path === "/users/42.json")).toHaveLength(1);
+    expect(mockClioGet.mock.calls.filter(([path]) => path === "/contacts/77.json")).toHaveLength(1);
+  });
 });
