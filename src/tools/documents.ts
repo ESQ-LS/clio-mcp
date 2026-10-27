@@ -43,15 +43,31 @@ function guessMime(filename: string): string {
   return MIME_MAP[ext] ?? "application/octet-stream";
 }
 
+type ReadableFileHandle = Pick<Awaited<ReturnType<typeof fs.open>>, "read">;
+
+export async function readExactBytes(
+  handle: ReadableFileHandle,
+  start: number,
+  length: number,
+): Promise<Buffer<ArrayBuffer>> {
+  const buf = Buffer.alloc(length) as Buffer<ArrayBuffer>;
+  let offset = 0;
+  while (offset < length) {
+    const { bytesRead } = await handle.read(buf, offset, length - offset, start + offset);
+    if (bytesRead === 0) throw new Error("Unexpected end of upload snapshot.");
+    offset += bytesRead;
+  }
+  return buf;
+}
+
 async function partMd5(filePath: string, start: number, length: number): Promise<string> {
-  const buf = Buffer.alloc(length);
   const fh = await fs.open(filePath, "r");
   try {
-    await fh.read(buf, 0, length, start);
+    const buf = await readExactBytes(fh, start, length);
+    return crypto.createHash("md5").update(buf).digest("base64");
   } finally {
     await fh.close();
   }
-  return crypto.createHash("md5").update(buf).digest("base64");
 }
 
 async function fileSha256(filePath: string): Promise<string> {
@@ -129,11 +145,21 @@ async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSna
     if (sourceStats.size > MAX_DOCUMENT_SIZE) {
       throw new Error("file_path exceeds Clio's 5 GB document limit.");
     }
-    await pipeline(
-      sourceHandle.createReadStream({ autoClose: false }),
-      createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }),
-    );
+    if (sourceStats.size === 0) {
+      await fs.writeFile(snapshotPath, "", { flag: "wx", mode: 0o600 });
+    } else {
+      await pipeline(
+        sourceHandle.createReadStream({ autoClose: false, start: 0, end: sourceStats.size - 1 }),
+        createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }),
+      );
+    }
     const snapshotStats = await fs.stat(snapshotPath);
+    if (snapshotStats.size !== sourceStats.size) {
+      throw new Error("The approved upload file changed while its snapshot was being created.");
+    }
+    if (snapshotStats.size > MAX_DOCUMENT_SIZE) {
+      throw new Error("file_path exceeds Clio's 5 GB document limit.");
+    }
     const sha256 = await fileSha256(snapshotPath);
     return {
       path: snapshotPath,
@@ -156,10 +182,10 @@ async function putPartToS3(
   putUrl: string,
   headers: Array<{ name: string; value: string }>
 ): Promise<void> {
-  const buf = Buffer.alloc(length);
   const fh = await fs.open(filePath, "r");
+  let buf: Buffer<ArrayBuffer>;
   try {
-    await fh.read(buf, 0, length, offset);
+    buf = await readExactBytes(fh, offset, length);
   } finally {
     await fh.close();
   }

@@ -14,7 +14,11 @@ import {
   CLIO_READ_ONLY_TOOL_ANNOTATIONS,
   CLIO_UPDATE_TOOL_ANNOTATIONS,
 } from "./annotations.js";
-import { buildNewCustomFieldValues, buildUpdatedCustomFieldValues } from "../esq/customFieldValues.js";
+import {
+  buildNewCustomFieldValues,
+  buildUpdatedCustomFieldValues,
+  resolveCustomFieldValueDetails,
+} from "../esq/customFieldValues.js";
 
 const MATTER_LIST_FIELDS =
   "id,display_number,description,status,client{id,name},practice_area{id,name},open_date,pending_date,close_date";
@@ -368,7 +372,14 @@ export function registerMatterTools(server: McpServer): void {
         const data = buildMatterData(normalized);
         fieldsChanged = Object.keys(data);
         const references = await resolveMatterReferences(normalized);
-        const proposal = { ...data, ...references };
+        const customFieldValueDetails = input.custom_field_values === undefined
+          ? undefined
+          : await resolveCustomFieldValueDetails(input.custom_field_values, "Matter");
+        const proposal = {
+          ...data,
+          ...references,
+          ...(customFieldValueDetails && { custom_field_value_details: customFieldValueDetails }),
+        };
         if (!input.confirm_write) {
           const auditOk = await recordMatterMutation("create_matter", "dry_run", "success", fieldsChanged);
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
@@ -442,6 +453,9 @@ export function registerMatterTools(server: McpServer): void {
         }
         data = buildMatterUpdateData(input, current);
         const references = await resolveMatterReferences(input, current);
+        const customFieldValueDetails = input.custom_field_values === undefined
+          ? undefined
+          : await resolveCustomFieldValueDetails(input.custom_field_values, "Matter");
         const proposal = {
           record_id: input.matter_id,
           current_etag: current.etag,
@@ -452,7 +466,11 @@ export function registerMatterTools(server: McpServer): void {
             status: current.status,
             client: current.client,
           },
-          changes: { ...data, ...references },
+          changes: {
+            ...data,
+            ...references,
+            ...(customFieldValueDetails && { custom_field_value_details: customFieldValueDetails }),
+          },
           fields_changed: fieldsChanged,
         };
 

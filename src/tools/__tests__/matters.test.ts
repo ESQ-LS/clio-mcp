@@ -184,6 +184,9 @@ describe("controlled matter writes", () => {
       if (path === "/matter_stages/20.json") return { data: { id: 20, name: "Intake" } };
       if (path === "/groups/30.json") return { data: { id: 30, name: "Firm" } };
       if (path === "/contacts/2.json") return { data: { id: 2, name: "Synthetic Related", type: "Person" } };
+      if (path === "/custom_fields/8001.json") return { data: {
+        id: 8001, name: "Internal code", field_type: "text_line", parent_type: "Matter",
+      } };
       throw new Error(`unexpected path ${path}`);
     });
     const args = {
@@ -200,6 +203,12 @@ describe("controlled matter writes", () => {
       relationships: [{ contact_id: 2, description: "Primary contact" }],
     };
     const preview = JSON.parse((await handlers.create_matter(args)).content[0].text);
+    expect(preview.proposal.custom_field_value_details).toEqual([{
+      custom_field: {
+        id: 8001, name: "Internal code", field_type: "text_line", parent_type: "Matter",
+      },
+      value: "SYN-MATTER",
+    }]);
     await handlers.create_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledWith("/matters.json", { data: expect.objectContaining({
       responsible_staff: { id: 10 }, matter_stage: { id: 20 }, group: { id: 30 },
@@ -268,7 +277,13 @@ describe("controlled matter writes", () => {
         value: "OLD", custom_field: { id: 8001 },
       }],
     };
-    mockClioGet.mockResolvedValue({ data: current });
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath === "/matters/42.json") return { data: current };
+      if (requestPath === "/custom_fields/8001.json") return { data: {
+        id: 8001, name: "Internal code", field_type: "text_line", parent_type: "Matter",
+      } };
+      throw new Error(`unexpected path ${requestPath}`);
+    });
     const args = { matter_id: 42, custom_field_values: [{ custom_field_id: 8001, value: "NEW" }] };
     const preview = JSON.parse((await handlers.update_matter(args)).content[0].text);
     expect(preview.proposal.changes.custom_field_values).toEqual([

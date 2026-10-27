@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
-import { constants } from "fs";
+import { appendFileSync, constants, createReadStream } from "fs";
 
 const { mockClioGet, mockClioPost, mockClioPut, mockClioPatch, mockAppendAuditLog } = vi.hoisted(() => ({
   mockClioGet: vi.fn(), mockClioPost: vi.fn(), mockClioPut: vi.fn(), mockClioPatch: vi.fn(),
@@ -17,7 +17,7 @@ vi.mock("../../auth/tokenStorage.js", () => ({
   loadTokens: vi.fn(async () => ({ clio_user_id: "100", expires_at: Date.now() + 60000 })),
 }));
 
-import { registerDocumentTools } from "../documents.js";
+import { readExactBytes, registerDocumentTools } from "../documents.js";
 
 let tempDir = "";
 beforeEach(async () => {
@@ -31,6 +31,20 @@ beforeEach(async () => {
 afterEach(async () => { await fs.rm(tempDir, { recursive: true, force: true }); });
 
 describe("controlled document upload", () => {
+  it("fills buffers across short reads and fails on premature EOF", async () => {
+    const source = Buffer.from("synthetic bytes");
+    const shortReader = {
+      read: vi.fn(async (target: Buffer, offset: number, length: number, position: number) => {
+        const bytesRead = Math.min(2, length, source.length - position);
+        if (bytesRead > 0) source.copy(target, offset, position, position + bytesRead);
+        return { bytesRead, buffer: target };
+      }),
+    };
+    await expect(readExactBytes(shortReader as any, 0, source.length)).resolves.toEqual(source);
+    await expect(readExactBytes(shortReader as any, 0, source.length + 1))
+      .rejects.toThrow("Unexpected end of upload snapshot");
+  });
+
   it("previews the exact file hash and target without starting an upload", async () => {
     const filePath = path.join(tempDir, "synthetic.txt");
     await fs.writeFile(filePath, "synthetic document\n");
@@ -113,6 +127,55 @@ describe("controlled document upload", () => {
     expect(openSpy.mock.results.filter(({ value }) => value && typeof value === "object")).toHaveLength(1);
     expect(mockClioGet).not.toHaveBeenCalled();
     expect(mockClioPost).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it("bounds the snapshot stream to the validated size", async () => {
+    const filePath = path.join(tempDir, "growing.txt");
+    const original = "approved bytes";
+    await fs.writeFile(filePath, original);
+    const realFilePath = await fs.realpath(filePath);
+    const originalOpen = fs.open.bind(fs);
+    let streamOptions: any;
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await originalOpen(...args);
+      if (args[0] === realFilePath && typeof args[1] === "number") {
+        const originalCreateReadStream = handle.createReadStream.bind(handle);
+        vi.spyOn(handle, "createReadStream").mockImplementation((options: any) => {
+          streamOptions = options;
+          appendFileSync(filePath, " appended after validation");
+          return originalCreateReadStream(options);
+        });
+      }
+      return handle;
+    });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const preview = JSON.parse((await handlers.upload_document({ file_path: filePath, matter_id: 99 })).content[0].text);
+    expect(streamOptions).toMatchObject({ start: 0, end: Buffer.byteLength(original) - 1 });
+    expect(preview.proposal.document.size).toBe(Buffer.byteLength(original));
+    openSpy.mockRestore();
+  });
+
+  it("rejects a snapshot whose final size differs from the validated file", async () => {
+    const filePath = path.join(tempDir, "changing.txt");
+    const shortPath = path.join(tempDir, "short.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    await fs.writeFile(shortPath, "short");
+    const realFilePath = await fs.realpath(filePath);
+    const originalOpen = fs.open.bind(fs);
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await originalOpen(...args);
+      if (args[0] === realFilePath && typeof args[1] === "number") {
+        vi.spyOn(handle, "createReadStream").mockImplementation(() => createReadStream(shortPath));
+      }
+      return handle;
+    });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const result = await handlers.upload_document({ file_path: filePath, matter_id: 99 });
+    expect(JSON.parse(result.content[0].text).error).toContain("changed while its snapshot was being created");
+    expect(mockClioGet).not.toHaveBeenCalled();
     openSpy.mockRestore();
   });
 

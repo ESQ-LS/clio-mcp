@@ -14,7 +14,11 @@ import {
   CLIO_READ_ONLY_TOOL_ANNOTATIONS,
   CLIO_UPDATE_TOOL_ANNOTATIONS,
 } from "./annotations.js";
-import { buildNewCustomFieldValues, buildUpdatedCustomFieldValues } from "../esq/customFieldValues.js";
+import {
+  buildNewCustomFieldValues,
+  buildUpdatedCustomFieldValues,
+  resolveCustomFieldValueDetails,
+} from "../esq/customFieldValues.js";
 
 const CONTACT_LIST_FIELDS =
   "id,name,email_addresses{address,name},phone_numbers{number,name},company{id,name},type";
@@ -453,7 +457,14 @@ export function registerContactTools(server: McpServer): void {
         const company = await validateContactCompany(input.company_id);
         const data = buildContactData(input);
         fieldsChanged = Object.keys(data);
-        const proposal = { ...data, ...(company && { company }) };
+        const customFieldValueDetails = input.custom_field_values === undefined
+          ? undefined
+          : await resolveCustomFieldValueDetails(input.custom_field_values, "Contact");
+        const proposal = {
+          ...data,
+          ...(company && { company }),
+          ...(customFieldValueDetails && { custom_field_value_details: customFieldValueDetails }),
+        };
 
         if (!input.confirm_write) {
           const duplicateQueries = [...new Set([input.name, input.email].filter((value): value is string => Boolean(value)))];
@@ -550,6 +561,9 @@ export function registerContactTools(server: McpServer): void {
           throw new Error("Clio did not return a contact ETag; no update can be performed safely.");
         }
         const data = buildContactUpdateData(input, current);
+        const customFieldValueDetails = input.custom_field_values === undefined
+          ? undefined
+          : await resolveCustomFieldValueDetails(input.custom_field_values, "Contact");
         const proposal = {
           record_id: input.contact_id,
           current_etag: current.etag,
@@ -559,7 +573,11 @@ export function registerContactTools(server: McpServer): void {
             email: current.email_addresses?.[0]?.address ?? null,
             phone: current.phone_numbers?.[0]?.number ?? null,
           },
-          changes: { ...data, ...(company && { company }) },
+          changes: {
+            ...data,
+            ...(company && { company }),
+            ...(customFieldValueDetails && { custom_field_value_details: customFieldValueDetails }),
+          },
           fields_changed: fieldsChanged,
         };
 

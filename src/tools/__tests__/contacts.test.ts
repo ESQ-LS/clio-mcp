@@ -126,7 +126,13 @@ describe("controlled contact writes", () => {
   });
 
   it("includes ordinary profile and custom fields in an unchanged create", async () => {
-    mockClioGet.mockResolvedValue({ data: [] });
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath === "/custom_fields/7001.json") return { data: {
+        id: 7001, name: "Registry number", field_type: "text_line", parent_type: "Contact",
+      } };
+      if (requestPath === "/contacts.json") return { data: [] };
+      throw new Error(`unexpected path ${requestPath}`);
+    });
     mockClioPost.mockResolvedValue({ data: { id: 44, name: "Synthetic Person", type: "Person" } });
     const handlers = getHandlers();
     const args = {
@@ -136,6 +142,12 @@ describe("controlled contact writes", () => {
       confirm_write: false,
     };
     const preview = JSON.parse((await handlers.create_contact(args)).content[0].text);
+    expect(preview.proposal.custom_field_value_details).toEqual([{
+      custom_field: {
+        id: 7001, name: "Registry number", field_type: "text_line", parent_type: "Contact",
+      },
+      value: "SYN-123",
+    }]);
     await handlers.create_contact({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledWith("/contacts.json", { data: expect.objectContaining({
       prefix: "Ms.", middle_name: "Example", date_of_birth: "1980-01-02",
@@ -309,7 +321,13 @@ describe("controlled contact writes", () => {
         value: "OLD", custom_field: { id: 7001 },
       }],
     } };
-    mockClioGet.mockResolvedValue(current);
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath === "/contacts/42.json") return current;
+      if (requestPath === "/custom_fields/7001.json") return { data: {
+        id: 7001, name: "Registry number", field_type: "text_line", parent_type: "Contact",
+      } };
+      throw new Error(`unexpected path ${requestPath}`);
+    });
     mockClioPatch.mockResolvedValue({ data: { id: 42 } });
     const handlers = getHandlers();
     const args = { contact_id: 42, custom_field_values: [{ custom_field_id: 7001, value: "NEW" }] };
