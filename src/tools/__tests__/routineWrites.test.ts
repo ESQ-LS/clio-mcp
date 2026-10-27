@@ -48,19 +48,30 @@ describe("routine preview-controlled writes", () => {
 
   it("previews notification consequences before creating a calendar entry", async () => {
     mockClioGet.mockImplementation(async (path: string) => {
-      if (path === "/calendars/1.json") return { data: { id: 1, name: "Firm", type: "Calendar" } };
+      if (path === "/calendars.json") return { data: [{ id: 1, name: "Firm", type: "AccountCalendar" }] };
       if (path === "/matters/99.json") return { data: { id: 99, display_number: "00099-001", description: "Synthetic", status: "open" } };
-      if (path === "/users/42.json") return { data: { id: 42, name: "Synthetic Lawyer", enabled: true } };
+      if (path === "/contacts/42.json") return { data: { id: 42, name: "Synthetic Client", type: "Person" } };
+      if (path === "/calendars/43.json") return { data: { id: 43, name: "Synthetic Lawyer", type: "UserCalendar" } };
       throw new Error(`unexpected path ${path}`);
     });
     mockClioPost.mockResolvedValue({ data: { id: 8, summary: "Synthetic hearing", attendees: [] } });
     const handlers = handlersFor(registerCalendarTools);
-    const args = { summary: "Synthetic hearing", start_at: "2026-11-01T09:00", end_at: "2026-11-01T10:00", calendar_owner_id: 1, matter_id: 99, attendee_ids: [42], send_email_notification: true };
+    const args = {
+      summary: "Synthetic hearing", start_at: "2026-11-01T09:00", end_at: "2026-11-01T10:00",
+      calendar_owner_id: 1, matter_id: 99,
+      attendees: [{ id: 42, type: "Contact" }, { id: 43, type: "Calendar" }],
+      send_email_notification: true,
+    };
     const preview = JSON.parse((await handlers.create_calendar_entry(args)).content[0].text);
     expect(preview.proposal.event.send_email_notification).toBe(true);
     expect(mockClioPost).not.toHaveBeenCalled();
     await handlers.create_calendar_entry({ ...args, confirm_write: true, preview_token: preview.preview_token });
-    expect(mockClioPost).toHaveBeenCalledOnce();
+    expect(mockClioPost).toHaveBeenCalledWith("/calendar_entries.json", { data: expect.objectContaining({
+      attendees: args.attendees,
+    }) });
+    expect(mockClioGet).toHaveBeenCalledWith("/calendars.json", {
+      "ids[]": "1", writeable: "true", fields: "id,name,type", limit: "1",
+    });
     expect(JSON.stringify(mockAppendAuditLog.mock.calls)).not.toContain(args.summary);
   });
 
@@ -70,11 +81,24 @@ describe("routine preview-controlled writes", () => {
       summary: "Synthetic hearing", start_at: "2026-11-01T09:00", end_at: "2026-11-01T10:00",
       calendar_owner_id: 1,
     };
-    expect((await handlers.create_calendar_entry({ ...base, attendee_ids: [42, 42] })).isError).toBe(true);
     expect((await handlers.create_calendar_entry({
-      ...base, attendee_ids: Array.from({ length: 21 }, (_, index) => index + 1),
+      ...base, attendees: [{ id: 42, type: "Contact" }, { id: 42, type: "Contact" }],
+    })).isError).toBe(true);
+    expect((await handlers.create_calendar_entry({
+      ...base, attendees: Array.from({ length: 21 }, (_, index) => ({ id: index + 1, type: "Contact" })),
     })).isError).toBe(true);
     expect(mockClioGet).not.toHaveBeenCalled();
+  });
+
+  it("refuses to preview a calendar entry unless the owner calendar is writable", async () => {
+    mockClioGet.mockResolvedValue({ data: [] });
+    const result = await handlersFor(registerCalendarTools).create_calendar_entry({
+      summary: "Synthetic hearing", start_at: "2026-11-01T09:00", end_at: "2026-11-01T10:00",
+      calendar_owner_id: 1,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Calendar validation failed");
+    expect(mockClioPost).not.toHaveBeenCalled();
   });
 
   it("logs a communication without sending an external message", async () => {

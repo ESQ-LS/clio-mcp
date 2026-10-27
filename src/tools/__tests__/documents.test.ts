@@ -80,6 +80,27 @@ describe("controlled document upload", () => {
     await fs.rm(outsideDir, { recursive: true, force: true });
   });
 
+  it("rejects an opened descriptor that resolves outside the approved root", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "clio-doc-swapped-"));
+    const outsidePath = path.join(outsideDir, "outside.txt");
+    await fs.writeFile(filePath, "approved");
+    await fs.writeFile(outsidePath, "outside");
+    const originalRealpath = fs.realpath.bind(fs);
+    const realpathSpy = vi.spyOn(fs, "realpath").mockImplementation(async (candidate) => {
+      if (String(candidate).startsWith("/proc/self/fd/")) return outsidePath;
+      return originalRealpath(candidate);
+    });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const result = await handlers.upload_document({ file_path: filePath, matter_id: 99 });
+    expect(JSON.parse(result.content[0].text).error).toContain("opened file is outside the approved upload root");
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPost).not.toHaveBeenCalled();
+    realpathSpy.mockRestore();
+    await fs.rm(outsideDir, { recursive: true, force: true });
+  });
+
   it("rejects files above Clio's limit before copying or hashing them", async () => {
     const filePath = path.join(tempDir, "oversized.bin");
     await fs.writeFile(filePath, "");

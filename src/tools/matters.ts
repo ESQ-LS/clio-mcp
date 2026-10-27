@@ -53,6 +53,7 @@ const matterFieldsSchema = {
   location: z.string().trim().max(500).optional().describe("Matter location"),
   client_reference: z.string().trim().max(255).optional().describe("External reference for cross-linking systems"),
   display_number: z.string().trim().min(1).max(255).optional().describe("Manual matter number; only accepted when the Clio account permits it"),
+  reset_matter_number: z.boolean().optional().describe("Recalculate the matter number when changing data that affects display_number"),
   require_utbms_codes: z.boolean().optional(),
   custom_field_values: z.array(matterCustomFieldValueSchema).max(100).optional(),
   statute_of_limitations_due_at: z.string().date().optional(),
@@ -64,7 +65,7 @@ function buildMatterData(input: Record<string, unknown>): Record<string, unknown
   const data: Record<string, unknown> = {};
   for (const key of [
     "description", "display_number", "status", "open_date", "pending_date", "close_date", "billable",
-    "location", "client_reference", "require_utbms_codes",
+    "location", "client_reference", "require_utbms_codes", "reset_matter_number",
   ] as const) {
     if (input[key] !== undefined) data[key] = input[key];
   }
@@ -341,6 +342,7 @@ export function registerMatterTools(server: McpServer): void {
         location: matterFieldsSchema.location,
         client_reference: matterFieldsSchema.client_reference,
         display_number: matterFieldsSchema.display_number,
+        reset_matter_number: matterFieldsSchema.reset_matter_number,
         require_utbms_codes: matterFieldsSchema.require_utbms_codes,
         custom_field_values: matterFieldsSchema.custom_field_values,
         statute_of_limitations_due_at: matterFieldsSchema.statute_of_limitations_due_at,
@@ -424,6 +426,9 @@ export function registerMatterTools(server: McpServer): void {
       let writeAttempted = false;
       let fieldsChanged: string[] = [];
       try {
+        if (input.display_number !== undefined && input.reset_matter_number !== true) {
+          throw new Error("reset_matter_number must be true when updating display_number.");
+        }
         let data = buildMatterData(input);
         fieldsChanged = Object.keys(data);
         if (fieldsChanged.length === 0) throw new Error("At least one matter field must be supplied.");

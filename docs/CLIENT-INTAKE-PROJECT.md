@@ -1,6 +1,6 @@
 # ESQ AI client intake assistant
 
-Updated: October 26, 2026 (America/Toronto).
+Updated: October 27, 2026 (America/Toronto).
 
 Goal: support a solo-lawyer Clio workflow with efficient, preview-controlled
 routine writes while reserving destructive, financial, trust, permission, and
@@ -34,6 +34,9 @@ GitHub Issues is disabled in this repository, so this file is the project tracke
 - [x] Step 3: commit, push, and open the superseding pull request.
 - [x] Resolve the six current-head code-review findings from October 23 with
   focused regression coverage; request fresh code and security reviews.
+- [x] Resolve the valid October 26 review findings for upload containment,
+  calendar permissions and attendee types, and matter-number resets; upgrade
+  vulnerable HTTP and schema-validation dependencies.
 - [ ] Step 4: complete review, merge only after approval, select exact tools in
   `ESQ_WRITE_TOOLS`, and redeploy only with separate authorization.
 - [ ] Step 5: refresh the plugin catalog and verify discovery and write authorization.
@@ -58,10 +61,10 @@ protect against edits that race with the write. Tokens are specific to a Clio
 user, API region, and server process; after a restart or replica change, preview again.
 No live Clio records are required to complete step 1.
 
-Expanded-branch validation: 19 test files / 162 tests passed; the production
-TypeScript build and `git diff --check` passed. Tests use synthetic records and
-mocked API calls. The October 26 dependency audit reports two high-severity
-upstream advisories in `body-parser` and Zod; dependency remediation and its
-compatibility impact remain a separate pre-merge gate.
+Expanded-branch validation: 19 test files / 165 tests passed; the production
+TypeScript build, package dry run, `git diff --check`, and dependency audit
+(zero vulnerabilities) passed. Tests use synthetic records and mocked API
+calls. Zod 4.6.7 passed the full suite and build; `body-parser` and `qs` resolve
+to patched releases.
 Next action: wait for and inspect the fresh code and security reviews on PR #14;
 do not merge or deploy without separate authorization.

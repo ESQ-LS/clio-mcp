@@ -109,18 +109,21 @@ export function registerCalendarTools(server: McpServer): void {
         matter_id: z.number().int().positive().optional().describe("Matter ID to associate this entry with"),
         location: z.string().optional().describe("Geographic location of the event"),
         send_email_notification: z.boolean().optional().describe("Send email notifications to attendees"),
-        attendee_ids: z.array(z.number().int().positive()).max(20).optional().describe("Up to 20 unique Clio user IDs to invite as attendees"),
+        attendees: z.array(z.object({
+          id: z.number().int().positive(),
+          type: z.enum(["Contact", "Calendar"]),
+        })).max(20).optional().describe("Up to 20 unique Clio Contact or Calendar attendee references"),
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },
       annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
-    async ({ summary, start_at, end_at, calendar_owner_id, description, all_day, matter_id, location, send_email_notification, attendee_ids, confirm_write, preview_token }) => {
+    async ({ summary, start_at, end_at, calendar_owner_id, description, all_day, matter_id, location, send_email_notification, attendees: requestedAttendees, confirm_write, preview_token }) => {
       let writeAttempted = false;
       try {
-        const uniqueAttendeeIds = [...new Set(attendee_ids ?? [])];
-        if (uniqueAttendeeIds.length !== (attendee_ids ?? []).length) throw new Error("attendee_ids must be unique.");
-        if (uniqueAttendeeIds.length > 20) throw new Error("No more than 20 attendees may be supplied.");
+        const attendeeKeys = (requestedAttendees ?? []).map(({ type, id }) => `${type}:${id}`);
+        if (new Set(attendeeKeys).size !== attendeeKeys.length) throw new Error("attendees must be unique by type and ID.");
+        if (attendeeKeys.length > 20) throw new Error("No more than 20 attendees may be supplied.");
         const body: Record<string, unknown> = {
           summary,
           start_at: toIso(start_at),
@@ -132,19 +135,23 @@ export function registerCalendarTools(server: McpServer): void {
         if (matter_id !== undefined)                 body.matter = { id: matter_id };
         if (location !== undefined)                  body.location = location;
         if (send_email_notification !== undefined)   body.send_email_notification = send_email_notification;
-        if (uniqueAttendeeIds.length)                body.attendees = uniqueAttendeeIds.map((id) => ({ id }));
+        if (requestedAttendees?.length)              body.attendees = requestedAttendees;
 
-        const calendar = (await clioGet(`/calendars/${calendar_owner_id}.json`, { fields: "id,name,type" }))?.data;
+        const writableCalendars = (await clioGet("/calendars.json", {
+          "ids[]": String(calendar_owner_id), writeable: "true", fields: "id,name,type", limit: "1",
+        }))?.data ?? [];
+        const calendar = writableCalendars.find((entry: any) => entry?.id === calendar_owner_id);
         if (calendar?.id !== calendar_owner_id) throw new Error("Calendar validation failed.");
         const matter = matter_id === undefined ? null : (await clioGet(`/matters/${matter_id}.json`, {
           fields: "id,display_number,description,status",
         }))?.data;
         if (matter_id !== undefined && matter?.id !== matter_id) throw new Error("Matter validation failed.");
         const attendees = [];
-        for (const attendeeId of uniqueAttendeeIds) {
-          const user = (await clioGet(`/users/${attendeeId}.json`, { fields: "id,name,enabled" }))?.data;
-          if (user?.id !== attendeeId || user.enabled === false) throw new Error(`Attendee ${attendeeId} validation failed.`);
-          attendees.push({ id: user.id, name: user.name });
+        for (const attendee of requestedAttendees ?? []) {
+          const endpoint = attendee.type === "Contact" ? "contacts" : "calendars";
+          const record = (await clioGet(`/${endpoint}/${attendee.id}.json`, { fields: "id,name,type" }))?.data;
+          if (record?.id !== attendee.id) throw new Error(`${attendee.type} attendee ${attendee.id} validation failed.`);
+          attendees.push({ id: record.id, type: attendee.type, name: record.name });
         }
         const proposal = {
           calendar: { id: calendar.id, name: calendar.name, type: calendar.type },

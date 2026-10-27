@@ -192,6 +192,7 @@ describe("controlled matter writes", () => {
       matter_stage_id: 20,
       group_id: 30,
       location: "Toronto",
+      require_utbms_codes: true,
       pending_date: "2026-10-14",
       statute_of_limitations_due_at: "2027-10-14",
       statute_of_limitations_status: "pending" as const,
@@ -202,7 +203,7 @@ describe("controlled matter writes", () => {
     await handlers.create_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledWith("/matters.json", { data: expect.objectContaining({
       responsible_staff: { id: 10 }, matter_stage: { id: 20 }, group: { id: 30 },
-      location: "Toronto", pending_date: "2026-10-14",
+      location: "Toronto", pending_date: "2026-10-14", require_utbms_codes: true,
       statute_of_limitations: { due_at: "2027-10-14", status: "pending" },
       custom_field_values: [{ custom_field: { id: 8001 }, value: "SYN-MATTER" }],
       relationships: [{ contact: { id: 2 }, description: "Primary contact" }],
@@ -239,6 +240,24 @@ describe("controlled matter writes", () => {
     });
     expect(JSON.parse(confirmed.content[0].text).write_performed).toBe(true);
     expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: { status: "open" } }, { "If-Match": "matter-v1" });
+  });
+
+  it("requires and forwards the matter-number reset control for display-number updates", async () => {
+    mockClioGet.mockResolvedValue({ data: MATTER });
+    const rejected = await handlers.update_matter({ matter_id: 42, display_number: "SYN-0042" });
+    expect(rejected.isError).toBe(true);
+    expect(rejected.content[0].text).toContain("reset_matter_number must be true");
+    expect(mockClioGet).not.toHaveBeenCalled();
+
+    const args = { matter_id: 42, display_number: "SYN-0042", reset_matter_number: true };
+    const preview = JSON.parse((await handlers.update_matter(args)).content[0].text);
+    expect(preview.proposal.changes).toMatchObject({
+      display_number: "SYN-0042", reset_matter_number: true,
+    });
+    await handlers.update_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: {
+      display_number: "SYN-0042", reset_matter_number: true,
+    } }, { "If-Match": "matter-v1" });
   });
 
   it("updates an existing custom field by its composite value ID", async () => {

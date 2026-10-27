@@ -72,6 +72,36 @@ type UploadSnapshot = {
   cleanup: () => Promise<void>;
 };
 
+function isPathWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return Boolean(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+async function verifyOpenedUploadPath(
+  sourceHandle: Awaited<ReturnType<typeof fs.open>>,
+  approvedRoot: string,
+  approvedFile: string,
+): Promise<void> {
+  let openedPath: string;
+  try {
+    // Azure runs on Linux, where /proc resolves the path held by the open descriptor.
+    openedPath = await fs.realpath(`/proc/self/fd/${sourceHandle.fd}`);
+  } catch {
+    // Portable fallback: re-resolve the pathname and bind it to the opened inode.
+    openedPath = await fs.realpath(approvedFile);
+  }
+  if (!isPathWithin(approvedRoot, openedPath)) {
+    throw new Error("The opened file is outside the approved upload root.");
+  }
+  const [openedStats, currentStats] = await Promise.all([
+    sourceHandle.stat(),
+    fs.stat(openedPath),
+  ]);
+  if (openedStats.dev !== currentStats.dev || openedStats.ino !== currentStats.ino) {
+    throw new Error("The approved upload path changed while it was being opened.");
+  }
+}
+
 async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSnapshot> {
   const configuredRoot = process.env.ESQ_CLIO_UPLOAD_ROOT?.trim();
   if (!configuredRoot || !path.isAbsolute(configuredRoot)) {
@@ -85,8 +115,7 @@ async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSna
     fs.realpath(configuredRoot),
     fs.realpath(filePath),
   ]);
-  const relative = path.relative(approvedRoot, approvedFile);
-  if (!relative || relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+  if (!isPathWithin(approvedRoot, approvedFile)) {
     throw new Error("file_path is outside the approved upload root.");
   }
   const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), "esq-clio-upload-"));
@@ -94,6 +123,7 @@ async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSna
   let sourceHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
     sourceHandle = await fs.open(approvedFile, constants.O_RDONLY | constants.O_NOFOLLOW);
+    await verifyOpenedUploadPath(sourceHandle, approvedRoot, approvedFile);
     const sourceStats = await sourceHandle.stat();
     if (!sourceStats.isFile()) throw new Error("file_path must identify a regular file.");
     if (sourceStats.size > MAX_DOCUMENT_SIZE) {
