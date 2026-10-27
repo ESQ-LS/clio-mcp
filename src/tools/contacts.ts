@@ -545,9 +545,12 @@ export function registerContactTools(server: McpServer): void {
         const preliminaryData = buildContactData(input);
         fieldsChanged = Object.keys(preliminaryData);
         if (fieldsChanged.length === 0) throw new Error("At least one contact field must be supplied.");
+        const hasSingularAddressChanges = [
+          input.street, input.city, input.province, input.postal_code, input.country,
+        ].some((value) => value !== undefined);
         if ((input.email_id !== undefined && input.email === undefined) ||
             (input.phone_id !== undefined && input.phone === undefined) ||
-            (input.address_id !== undefined && !fieldsChanged.includes("addresses")) ||
+            (input.address_id !== undefined && (!hasSingularAddressChanges || input.addresses !== undefined)) ||
             (input.web_site_id !== undefined && input.web_site === undefined)) {
           throw new Error("An entry selector requires changes to that entry.");
         }

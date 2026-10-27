@@ -50,7 +50,10 @@ describe("routine preview-controlled writes", () => {
     mockClioGet.mockImplementation(async (path: string) => {
       if (path === "/calendars.json") return { data: [{ id: 1, name: "Firm", type: "AccountCalendar" }] };
       if (path === "/matters/99.json") return { data: { id: 99, display_number: "00099-001", description: "Synthetic", status: "open" } };
-      if (path === "/contacts/42.json") return { data: { id: 42, name: "Synthetic Client", type: "Person" } };
+      if (path === "/contacts/42.json") return { data: {
+        id: 42, name: "Synthetic Client", type: "Person",
+        email_addresses: [{ address: "synthetic@example.test", name: "Work", default_email: true }],
+      } };
       if (path === "/calendars/43.json") return { data: { id: 43, name: "Synthetic Lawyer", type: "UserCalendar" } };
       throw new Error(`unexpected path ${path}`);
     });
@@ -63,7 +66,13 @@ describe("routine preview-controlled writes", () => {
       send_email_notification: true,
     };
     const preview = JSON.parse((await handlers.create_calendar_entry(args)).content[0].text);
-    expect(preview.proposal.event.send_email_notification).toBe(true);
+    expect(preview.proposal.event).toMatchObject({
+      notify_firm_attendees_by_email: true,
+      external_contact_email_will_be_sent: true,
+    });
+    expect(preview.proposal.attendees[0].email_notification).toMatchObject({
+      will_send: true, mandatory: true, recipient: "synthetic@example.test",
+    });
     expect(mockClioPost).not.toHaveBeenCalled();
     await handlers.create_calendar_entry({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledWith("/calendar_entries.json", { data: expect.objectContaining({

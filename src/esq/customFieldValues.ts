@@ -7,6 +7,8 @@ type RequestedCustomFieldValue = {
 
 export type CustomFieldParentType = "Contact" | "Matter";
 
+const MAX_CUSTOM_FIELD_LOOKUP_CONCURRENCY = 4;
+
 type CustomFieldDefinition = {
   id: number;
   name: string;
@@ -52,6 +54,26 @@ function validateDefinition(value: unknown, expectedId: number, parentType: Cust
   return definition as CustomFieldDefinition;
 }
 
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex++;
+        results[index] = await mapper(values[index]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 export async function resolveCustomFieldValueDetails(
   requested: unknown,
   parentType: CustomFieldParentType,
@@ -59,7 +81,7 @@ export async function resolveCustomFieldValueDetails(
   const requests = normalizedRequests(requested);
   const referenceCache = new Map<string, Promise<Record<string, unknown>>>();
 
-  return Promise.all(requests.map(async ({ custom_field_id, value }) => {
+  return mapWithConcurrency(requests, MAX_CUSTOM_FIELD_LOOKUP_CONCURRENCY, async ({ custom_field_id, value }) => {
     const response = await clioGet(`/custom_fields/${custom_field_id}.json`, {
       fields: "id,name,field_type,parent_type,picklist_options{id,option}",
     });
@@ -110,7 +132,7 @@ export async function resolveCustomFieldValueDetails(
     }
 
     return detail;
-  }));
+  });
 }
 
 export function buildNewCustomFieldValues(value: unknown): Array<Record<string, unknown>> {

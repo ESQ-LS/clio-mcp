@@ -71,4 +71,26 @@ describe("custom-field reference validation", () => {
       { custom_field_id: 4, value: 44 },
     ], "Matter")).rejects.toThrow("could not be validated");
   });
+
+  it("bounds concurrent definition and reference lookups", async () => {
+    let active = 0;
+    let peak = 0;
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active--;
+      const id = Number(requestPath.match(/\d+/)?.[0]);
+      if (requestPath.startsWith("/custom_fields/")) return { data: {
+        id, name: `Synthetic field ${id}`, field_type: "contact", parent_type: "Matter",
+      } };
+      return { data: { id, name: `Synthetic contact ${id}`, type: "Person" } };
+    });
+    const requests = Array.from({ length: 12 }, (_, index) => ({
+      custom_field_id: index + 1,
+      value: index + 101,
+    }));
+    await expect(resolveCustomFieldValueDetails(requests, "Matter")).resolves.toHaveLength(12);
+    expect(peak).toBeLessThanOrEqual(4);
+  });
 });

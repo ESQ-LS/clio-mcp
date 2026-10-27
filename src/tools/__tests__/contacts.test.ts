@@ -358,6 +358,18 @@ describe("controlled contact writes", () => {
     expect(mockClioPatch).not.toHaveBeenCalled();
   });
 
+  it("rejects address_id when the plural addresses input is used", async () => {
+    const result = await getHandlers().update_contact({
+      contact_id: 42,
+      address_id: 13,
+      addresses: [{ name: "Work", city: "Toronto" }],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("selector requires changes to that entry");
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
   it("rejects a changed contact ETag before writing", async () => {
     const current = { id: 42, etag: "v1", name: "Synthetic" };
     mockClioGet.mockResolvedValue({ data: current });

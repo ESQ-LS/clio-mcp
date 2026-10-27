@@ -17,6 +17,14 @@ export function toIso(input: string, endOfDay = false): string {
   return input.length === 16 ? `${input}:00` : input;
 }
 
+export function assertCalendarDateFloor(...values: string[]): void {
+  for (const value of values) {
+    if (Number(value.slice(0, 4)) < 1900) {
+      throw new Error("Calendar dates must be on or after 1900-01-01.");
+    }
+  }
+}
+
 export function registerCalendarTools(server: McpServer): void {
   server.registerTool(
     "list_calendar_entries",
@@ -108,7 +116,7 @@ export function registerCalendarTools(server: McpServer): void {
         all_day: z.boolean().optional().describe("Whether the event spans the full day"),
         matter_id: z.number().int().positive().optional().describe("Matter ID to associate this entry with"),
         location: z.string().optional().describe("Geographic location of the event"),
-        send_email_notification: z.boolean().optional().describe("Send email notifications to attendees"),
+        send_email_notification: z.boolean().optional().describe("Notify firm-user attendees by email; Contact attendees with a valid email address are always notified by Clio"),
         attendees: z.array(z.object({
           id: z.number().int().positive(),
           type: z.enum(["Contact", "Calendar"]),
@@ -121,6 +129,7 @@ export function registerCalendarTools(server: McpServer): void {
     async ({ summary, start_at, end_at, calendar_owner_id, description, all_day, matter_id, location, send_email_notification, attendees: requestedAttendees, confirm_write, preview_token }) => {
       let writeAttempted = false;
       try {
+        assertCalendarDateFloor(start_at, end_at);
         const attendeeKeys = (requestedAttendees ?? []).map(({ type, id }) => `${type}:${id}`);
         if (new Set(attendeeKeys).size !== attendeeKeys.length) throw new Error("attendees must be unique by type and ID.");
         if (attendeeKeys.length > 20) throw new Error("No more than 20 attendees may be supplied.");
@@ -149,15 +158,46 @@ export function registerCalendarTools(server: McpServer): void {
         const attendees = [];
         for (const attendee of requestedAttendees ?? []) {
           const endpoint = attendee.type === "Contact" ? "contacts" : "calendars";
-          const record = (await clioGet(`/${endpoint}/${attendee.id}.json`, { fields: "id,name,type" }))?.data;
+          const fields = attendee.type === "Contact"
+            ? "id,name,type,email_addresses{address,name,default_email}"
+            : "id,name,type";
+          const record = (await clioGet(`/${endpoint}/${attendee.id}.json`, { fields }))?.data;
           if (record?.id !== attendee.id) throw new Error(`${attendee.type} attendee ${attendee.id} validation failed.`);
-          attendees.push({ id: record.id, type: attendee.type, name: record.name });
+          const emailAddress = attendee.type === "Contact"
+            ? (record.email_addresses ?? []).find((entry: any) =>
+                typeof entry?.address === "string" && entry.address.trim())?.address
+            : undefined;
+          attendees.push({
+            id: record.id,
+            type: attendee.type,
+            name: record.name,
+            ...(attendee.type === "Contact" && {
+              email_notification: emailAddress
+                ? {
+                    will_send: true,
+                    mandatory: true,
+                    recipient: emailAddress,
+                    reason: "Clio always emails Contact attendees with a valid email address.",
+                  }
+                : {
+                    will_send: false,
+                    mandatory: false,
+                    reason: "No valid email address was returned for this Contact attendee.",
+                  },
+            }),
+          });
         }
+        const { send_email_notification: _apiNotificationFlag, ...previewEvent } = body;
         const proposal = {
           calendar: { id: calendar.id, name: calendar.name, type: calendar.type },
           matter: matter ? { id: matter.id, display_number: matter.display_number, description: matter.description, status: matter.status } : null,
           attendees,
-          event: { ...body, send_email_notification: send_email_notification ?? false },
+          event: {
+            ...previewEvent,
+            notify_firm_attendees_by_email: send_email_notification ?? false,
+            external_contact_email_will_be_sent: attendees.some((attendee: any) =>
+              attendee.email_notification?.will_send === true),
+          },
         };
         if (!confirm_write) {
           const auditOk = await appendAuditLog({
