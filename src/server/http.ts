@@ -1,6 +1,6 @@
 import express from "express";
 import { readFileSync } from "fs";
-import { randomUUID } from "crypto";
+import { randomUUID, timingSafeEqual } from "crypto";
 
 const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -102,22 +102,27 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000).unref();
 
-function requireApiKey(
+export function requireApiKey(
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
 ): void {
-  const key = process.env.MCP_API_KEY;
-  if (!key) { next(); return; }
+  const key = process.env.MCP_API_KEY?.trim();
+  if (!key) {
+    res.status(503).json({ error: "HTTP authentication is not configured" });
+    return;
+  }
   const auth = req.headers.authorization ?? "";
-  if (auth !== `Bearer ${key}`) {
+  const expected = Buffer.from(`Bearer ${key}`, "utf8");
+  const actual = Buffer.from(auth, "utf8");
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
   next();
 }
 
-const app = express();
+export const app = express();
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, sessions: sessions.size });
@@ -230,7 +235,14 @@ app.get("/oauth/callback", async (req, res) => {
   }
 });
 
+export function assertHttpAuthenticationConfigured(): void {
+  if (!process.env.MCP_API_KEY?.trim()) {
+    throw new Error("MCP_API_KEY is required in HTTP mode.");
+  }
+}
+
 export function startHttpServer(): void {
+  assertHttpAuthenticationConfigured();
   const port = parseInt(process.env.PORT ?? "3000", 10);
   app.listen(port, () => {
     const baseUrl = (process.env.MCP_BASE_URL ?? `http://127.0.0.1:${port}`).trim();

@@ -264,6 +264,7 @@ Start the connector as a long-running server. In a terminal, from the `clio-mcp`
 
 ```bash
 TRANSPORT=http MCP_BASE_URL=http://127.0.0.1:3000 \
+MCP_API_KEY=replace_with_a_long_random_secret \
 CLIO_CLIENT_ID=your_client_id CLIO_CLIENT_SECRET=your_client_secret \
 node build/index.js
 ```
@@ -275,13 +276,15 @@ Then point Claude Desktop at it via the [`mcp-remote`](https://www.npmjs.com/pac
   "mcpServers": {
     "clio": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://127.0.0.1:3000/mcp"]
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:3000/mcp", "--header", "Authorization: Bearer replace_with_a_long_random_secret"]
     }
   }
 }
 ```
 
-If you set `MCP_API_KEY` on the server, pass it as a header from `mcp-remote` (`--header "Authorization: Bearer <key>"`).
+HTTP mode requires `MCP_API_KEY`. Pass the same value from `mcp-remote` in the
+`Authorization: Bearer <key>` header. The health endpoint and OAuth browser
+callback remain public; every MCP tool request is authenticated.
 
 ---
 
@@ -471,7 +474,7 @@ All settings are passed as environment variables (in your Claude Desktop config 
 | `TRANSPORT` | No | `http` | `stdio` or `http`. Defaults to `http` at v2.0.0; set to `stdio` for the pre-v2 behavior |
 | `MCP_BASE_URL` | HTTP mode | — | Public base URL of this server (e.g. `http://127.0.0.1:3000`). Used for the OAuth redirect |
 | `PORT` | No | `3000` | HTTP listen port (HTTP mode only) |
-| `MCP_API_KEY` | Write-enabled HTTP mode | — | Bearer token required before any `ESQ_WRITE_TOOLS` are exposed over HTTP. Read-only HTTP deployments may omit it. |
+| `MCP_API_KEY` | HTTP mode | — | Bearer token required for every MCP tool request, including read-only tools. HTTP startup fails if it is absent. |
 | `ENCRYPTION_KEY` | No | auto-generated | Overrides OS keychain. Required only for CI/headless installs where no keychain is available. Must be a 64-character hex string. |
 | `CLIO_REDIRECT_PORT` | No | `5678` | Local port for the OAuth callback (stdio mode). Change if 5678 is in use on your machine |
 | `CLIO_REGION` | No | `us` | `us`, `ca`, `eu`, or `au`. Controls the default Clio API and auth base URLs |
