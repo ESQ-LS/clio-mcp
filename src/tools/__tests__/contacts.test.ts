@@ -111,6 +111,31 @@ describe("controlled contact writes", () => {
     });
   });
 
+  it("invalidates confirmation when duplicate results change after preview", async () => {
+    let duplicateExists = false;
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath === "/contacts.json") return { data: duplicateExists ? [{
+        id: 88, name: "Synthetic Co", type: "Company",
+        email_addresses: [{ address: "intake@example.test" }],
+      }] : [] };
+      throw new Error(`unexpected path ${requestPath}`);
+    });
+    const handlers = getHandlers();
+    const args = { type: "Company", name: "Synthetic Co", email: "intake@example.test" };
+    const preview = JSON.parse((await handlers.create_contact(args)).content[0].text);
+    expect(preview.proposal.possible_duplicates).toEqual([]);
+
+    duplicateExists = true;
+    const result = await handlers.create_contact({
+      ...args,
+      confirm_write: true,
+      preview_token: preview.preview_token,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("proposal changed");
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
   it("searches both name and email for duplicates and deduplicates by ID", async () => {
     mockClioGet
       .mockResolvedValueOnce({ data: [{ id: 9, name: "Synthetic Co", type: "Company", email_addresses: [] }] })
@@ -190,6 +215,24 @@ describe("controlled contact writes", () => {
     expect(result.content[0].text).toContain("not both");
     expect(mockClioPost).not.toHaveBeenCalled();
     expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({ outcome: "error" }));
+  });
+
+  it("rejects nested association IDs when creating contacts", async () => {
+    const handlers = getHandlers();
+    for (const nested of [
+      { email_addresses: [{ id: 11, name: "Work", address: "synthetic@example.test" }] },
+      { phone_numbers: [{ id: 12, name: "Work", number: "4165550100" }] },
+      { addresses: [{ id: 13, name: "Work", city: "Toronto" }] },
+      { web_sites: [{ id: 14, name: "Work", address: "https://example.test" }] },
+    ]) {
+      const result = await handlers.create_contact({
+        type: "Company", name: "Synthetic Company", ...nested,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("cannot include id when creating a contact");
+    }
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPost).not.toHaveBeenCalled();
   });
 
   it("audits custom-field proposal errors raised during construction", async () => {

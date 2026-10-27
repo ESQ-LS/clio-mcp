@@ -66,6 +66,10 @@ const webSiteSchema = z.object({
   name: z.enum(["Work", "Personal", "Twitter", "Facebook", "LinkedIn", "Instant Messenger", "Other"]).default("Work"),
   address: z.string().url().max(2048), default_web_site: z.boolean().optional(),
 });
+const createEmailAddressSchema = emailAddressSchema.omit({ id: true });
+const createPhoneNumberSchema = phoneNumberSchema.omit({ id: true });
+const createAddressSchema = addressSchema.omit({ id: true });
+const createWebSiteSchema = webSiteSchema.omit({ id: true });
 const contactFieldsSchema = {
   type: contactTypeSchema.optional(),
   name: z.string().trim().min(1).max(255).optional(),
@@ -147,6 +151,41 @@ function assertNoConflictingContactAliases(input: Record<string, unknown>): void
       throw new Error(`Supply either ${label}, not both.`);
     }
   }
+}
+
+function assertNoNestedAssociationIdsForCreate(input: Record<string, unknown>): void {
+  for (const key of ["email_addresses", "phone_numbers", "addresses", "web_sites"] as const) {
+    for (const entry of (input[key] ?? []) as Array<Record<string, unknown>>) {
+      if (entry.id !== undefined) {
+        throw new Error(`${key} entries cannot include id when creating a contact.`);
+      }
+    }
+  }
+}
+
+async function findPossibleContactDuplicates(input: Record<string, unknown>): Promise<Array<Record<string, unknown>>> {
+  const pluralEmails = Array.isArray(input.email_addresses)
+    ? input.email_addresses.map((entry: any) => entry?.address)
+    : [];
+  const duplicateQueries = [...new Set(
+    [input.name, input.email, ...pluralEmails]
+      .filter((value): value is string => typeof value === "string" && Boolean(value)),
+  )];
+  const duplicateResponses = await Promise.all(duplicateQueries.map((query) => clioGet("/contacts.json", {
+    query, fields: CONTACT_LIST_FIELDS, limit: "5",
+  })));
+  const duplicateById = new Map<number, any>();
+  for (const response of duplicateResponses) {
+    for (const contact of response?.data ?? []) duplicateById.set(contact.id, contact);
+  }
+  return [...duplicateById.values()]
+    .map((contact: any) => ({
+      id: contact.id,
+      name: contact.name,
+      type: contact.type,
+      email: contact.email_addresses?.[0]?.address ?? null,
+    }))
+    .sort((left, right) => Number(left.id) - Number(right.id));
 }
 
 function existingEntry(entries: any[], kind: string, preferDefault = false, entryId?: number): any | undefined {
@@ -439,10 +478,10 @@ export function registerContactTools(server: McpServer): void {
         sales_tax_number: contactFieldsSchema.sales_tax_number,
         require_utbms_codes: contactFieldsSchema.require_utbms_codes,
         custom_field_values: contactFieldsSchema.custom_field_values,
-        email_addresses: contactFieldsSchema.email_addresses,
-        phone_numbers: contactFieldsSchema.phone_numbers,
-        addresses: contactFieldsSchema.addresses,
-        web_sites: contactFieldsSchema.web_sites,
+        email_addresses: z.array(createEmailAddressSchema).max(20).optional(),
+        phone_numbers: z.array(createPhoneNumberSchema).max(20).optional(),
+        addresses: z.array(createAddressSchema).max(20).optional(),
+        web_sites: z.array(createWebSiteSchema).max(20).optional(),
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },
@@ -454,30 +493,22 @@ export function registerContactTools(server: McpServer): void {
       let fieldsChanged: string[] = [];
       try {
         assertNoConflictingContactAliases(input);
+        assertNoNestedAssociationIdsForCreate(input);
         const company = await validateContactCompany(input.company_id);
         const data = buildContactData(input);
         fieldsChanged = Object.keys(data);
         const customFieldValueDetails = input.custom_field_values === undefined
           ? undefined
           : await resolveCustomFieldValueDetails(input.custom_field_values, "Contact");
+        const possibleDuplicates = await findPossibleContactDuplicates(input);
         const proposal = {
           ...data,
           ...(company && { company }),
           ...(customFieldValueDetails && { custom_field_value_details: customFieldValueDetails }),
+          possible_duplicates: possibleDuplicates,
         };
 
         if (!input.confirm_write) {
-          const duplicateQueries = [...new Set([input.name, input.email].filter((value): value is string => Boolean(value)))];
-          const duplicateResponses = await Promise.all(duplicateQueries.map((query) => clioGet("/contacts.json", {
-            query, fields: CONTACT_LIST_FIELDS, limit: "5",
-          })));
-          const duplicateById = new Map<number, any>();
-          for (const response of duplicateResponses) {
-            for (const contact of response?.data ?? []) duplicateById.set(contact.id, contact);
-          }
-          const possibleDuplicates = [...duplicateById.values()].map((c: any) => ({
-            id: c.id, name: c.name, type: c.type, email: c.email_addresses?.[0]?.address ?? null,
-          }));
           const auditOk = await recordContactMutation("create_contact", "dry_run", "success", fieldsChanged);
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
           return writeJsonResult(writePreviewEnvelope(
