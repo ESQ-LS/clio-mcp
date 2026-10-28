@@ -77,6 +77,22 @@ describe("controlled task writes", () => {
     expect(JSON.parse(result.content[0].text).task.status).toBe("complete");
   });
 
+  it("reports failed final audits after successful create, update, and complete writes", async () => {
+    const cases = [
+      { tool: "create_task", args: { matter_id: 99, name: "Draft contract", description: "Synthetic task", priority: "Normal" } },
+      { tool: "update_task", args: { task_id: 1, name: "Updated task" } },
+      { tool: "complete_task", args: { task_id: 1 } },
+    ];
+    for (const testCase of cases) {
+      mockAppendAuditLog.mockReset().mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      const handler = handlers.get(testCase.tool)!;
+      const preview = JSON.parse((await handler(testCase.args)).content[0].text);
+      const result = await handler({ ...testCase.args, confirm_write: true, preview_token: preview.preview_token });
+      expect(result.isError).not.toBe(true);
+      expect(JSON.parse(result.content[0].text)).toMatchObject({ success: true, audit_recorded: false });
+    }
+  });
+
   it("refuses a stale task without writing", async () => {
     const args = { task_id: 1, name: "Updated" };
     const preview = JSON.parse((await handlers.get("update_task")!(args)).content[0].text);

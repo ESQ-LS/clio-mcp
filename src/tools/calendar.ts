@@ -224,7 +224,7 @@ export function registerCalendarTools(server: McpServer): void {
         const data = await clioPost("/calendar_entries.json", { data: body });
         const entry = data.data as any;
 
-        await appendAuditLog({ tool: "create_calendar_entry", action: "create", confirmation_state: "confirmed", args: { confirm_write: true, start_at, end_at, calendar_owner_id, matter_id }, outcome: "success", ...(matter_id && { matter_id }) });
+        const auditOk = await appendAuditLog({ tool: "create_calendar_entry", action: "create", confirmation_state: "confirmed", args: { confirm_write: true, start_at, end_at, calendar_owner_id, matter_id }, outcome: "success", ...(matter_id && { matter_id }) });
 
         const result = {
           id: entry.id,
@@ -234,6 +234,7 @@ export function registerCalendarTools(server: McpServer): void {
           end_at: entry.end_at,
           matter: entry.matter ? { id: entry.matter.id, display_number: entry.matter.display_number } : null,
           attendees: (entry.attendees ?? []).map((a: any) => ({ id: a.id, name: a.name })),
+          audit_recorded: auditOk,
         };
 
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };

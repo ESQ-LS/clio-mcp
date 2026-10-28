@@ -146,7 +146,7 @@ export function registerTaskTools(server: McpServer): void {
         const data = await clioPost("/tasks.json", { data: taskData });
         const task = data.data;
 
-        await appendAuditLog({
+        const auditOk = await appendAuditLog({
           tool: "create_task",
           action: "create", confirmation_state: "confirmed",
           args: { confirm_write: true, matter_id, priority, due_date, assignee_id },
@@ -159,6 +159,7 @@ export function registerTaskTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({
               success: true,
+              audit_recorded: auditOk,
               task: {
                 id: task.id,
                 name: task.name,
@@ -244,7 +245,7 @@ export function registerTaskTools(server: McpServer): void {
         const data = await clioPatch(`/tasks/${task_id}.json`, { data: taskData }, { "If-Match": current.etag });
         const task = data.data;
 
-        await appendAuditLog({
+        const auditOk = await appendAuditLog({
           tool: "update_task",
           action: "update", confirmation_state: "confirmed",
           args: { confirm_write: true, task_id, fields_changed: Object.keys(taskData) },
@@ -257,6 +258,7 @@ export function registerTaskTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({
               success: true,
+              audit_recorded: auditOk,
               task: {
                 id: task.id,
                 name: task.name,
@@ -328,7 +330,7 @@ export function registerTaskTools(server: McpServer): void {
         const data = await clioPatch(`/tasks/${task_id}.json`, { data: { status: STATUS_MAP["Complete"] } }, { "If-Match": current.etag });
         const task = data.data;
 
-        await appendAuditLog({
+        const auditOk = await appendAuditLog({
           tool: "complete_task",
           action: "update", confirmation_state: "confirmed", args: { confirm_write: true, task_id },
           outcome: "success",
@@ -340,6 +342,7 @@ export function registerTaskTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({
               success: true,
+              audit_recorded: auditOk,
               task: {
                 id: task.id,
                 name: task.name,

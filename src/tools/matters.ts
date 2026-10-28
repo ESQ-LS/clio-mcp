@@ -283,6 +283,7 @@ export function registerMatterTools(server: McpServer): void {
           client: m.client ? { id: m.client.id, name: m.client.name } : null,
           practice_area: m.practice_area ? { id: m.practice_area.id, name: m.practice_area.name } : null,
           open_date: m.open_date,
+          pending_date: m.pending_date ?? null,
           close_date: m.close_date ?? null,
           billable: m.billable,
           responsible_attorney: m.responsible_attorney

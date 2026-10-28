@@ -205,6 +205,25 @@ describe("controlled document upload", () => {
     vi.unstubAllGlobals();
   });
 
+  it("reports a failed final audit after a successful document upload", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    mockClioPost.mockResolvedValue({ data: { id: 7, latest_document_version: {
+      uuid: "synthetic-version", multiparts: [{ part_number: 1, put_url: "https://upload.test", put_headers: [] }],
+    } } });
+    mockClioPatch.mockResolvedValue({ data: { id: 7 } });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const args = { file_path: filePath, matter_id: 99 };
+    const preview = JSON.parse((await handlers.upload_document(args)).content[0].text);
+    mockAppendAuditLog.mockReset().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const result = await handlers.upload_document({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ document_id: 7, audit_recorded: false });
+    vi.unstubAllGlobals();
+  });
+
   it("does not replace a successful upload result when snapshot cleanup fails", async () => {
     const filePath = path.join(tempDir, "synthetic.txt");
     await fs.writeFile(filePath, "approved bytes");

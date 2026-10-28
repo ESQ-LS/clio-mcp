@@ -115,6 +115,12 @@ describe("controlled matter writes", () => {
     expect(mockClioGet.mock.calls[0][1].fields).toContain("pending_date");
   });
 
+  it("returns pending_date when reading a matter", async () => {
+    mockClioGet.mockResolvedValue({ data: { ...MATTER, pending_date: "2026-10-23" } });
+    const result = JSON.parse((await handlers.get_matter({ matter_id: 42 })).content[0].text);
+    expect(result.pending_date).toBe("2026-10-23");
+  });
+
   it("does not request unsupported second-level field expansions", async () => {
     mockClioGet.mockResolvedValue({ data: MATTER });
     await handlers.get_matter({ matter_id: 42 });

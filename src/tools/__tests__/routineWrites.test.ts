@@ -46,6 +46,18 @@ describe("routine preview-controlled writes", () => {
     }));
   });
 
+  it("reports a failed final audit after a successful note write", async () => {
+    mockClioGet.mockResolvedValue({ data: { id: 99, display_number: "00099-001", description: "Synthetic", status: "open" } });
+    mockClioPost.mockResolvedValue({ data: { id: 7, subject: "Synthetic note" } });
+    const args = { matter_id: 99, subject: "Synthetic note", body: "Synthetic detail" };
+    const handler = handlersFor(registerNoteTools).create_note;
+    const preview = JSON.parse((await handler(args)).content[0].text);
+    mockAppendAuditLog.mockReset().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const result = await handler({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ success: true, audit_recorded: false });
+  });
+
   it("previews notification consequences before creating a calendar entry", async () => {
     mockClioGet.mockImplementation(async (path: string) => {
       if (path === "/calendars.json") return { data: [{ id: 1, name: "Firm", type: "AccountCalendar" }] };
@@ -82,6 +94,18 @@ describe("routine preview-controlled writes", () => {
       "ids[]": "1", writeable: "true", fields: "id,name,type", limit: "1",
     });
     expect(JSON.stringify(mockAppendAuditLog.mock.calls)).not.toContain(args.summary);
+  });
+
+  it("reports a failed final audit after a successful calendar write", async () => {
+    mockClioGet.mockResolvedValue({ data: [{ id: 1, name: "Firm", type: "AccountCalendar" }] });
+    mockClioPost.mockResolvedValue({ data: { id: 8, summary: "Synthetic hearing", attendees: [] } });
+    const args = { summary: "Synthetic hearing", start_at: "2026-11-01T09:00", end_at: "2026-11-01T10:00", calendar_owner_id: 1 };
+    const handler = handlersFor(registerCalendarTools).create_calendar_entry;
+    const preview = JSON.parse((await handler(args)).content[0].text);
+    mockAppendAuditLog.mockReset().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const result = await handler({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse(result.content[0].text).audit_recorded).toBe(false);
   });
 
   it("rejects duplicate or excessive calendar attendees before API validation", async () => {

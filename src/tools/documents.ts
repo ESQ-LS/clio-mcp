@@ -441,7 +441,7 @@ export function registerDocumentTools(server: McpServer): void {
           data: { uuid, fully_uploaded: "true" },
         });
 
-        await appendAuditLog({
+        const auditOk = await appendAuditLog({
           tool: "upload_document",
           action: "create",
           confirmation_state: "confirmed",
@@ -453,7 +453,13 @@ export function registerDocumentTools(server: McpServer): void {
         return {
           content: [{
             type: "text",
-            text: JSON.stringify({ document_id: docId, name: docName, uuid, parts: allParts.length }, null, 2),
+            text: JSON.stringify({
+              document_id: docId,
+              name: docName,
+              uuid,
+              parts: allParts.length,
+              audit_recorded: auditOk,
+            }, null, 2),
           }],
         };
       } catch (err: any) {

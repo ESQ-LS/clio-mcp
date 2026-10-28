@@ -42,34 +42,38 @@ const customFieldValueSchema = z.object({
   custom_field_id: z.number().int().positive(),
   value: z.union([z.string(), z.number(), z.boolean()]),
 });
+const emailAddressNameSchema = z.enum(["Work", "Home", "Other"]);
+const phoneNumberNameSchema = z.enum(["Work", "Home", "Mobile", "Fax", "Pager", "Skype", "Other"]);
+const addressNameSchema = z.enum(["Work", "Home", "Billing", "Other"]);
+const webSiteNameSchema = z.enum(["Work", "Personal", "Twitter", "Facebook", "LinkedIn", "Instant Messenger", "Other"]);
 const emailAddressSchema = z.object({
   id: z.number().int().positive().optional(),
-  name: z.enum(["Work", "Home", "Other"]).default("Work"),
+  name: emailAddressNameSchema.optional(),
   address: z.string().email().max(254),
   default_email: z.boolean().optional(),
 });
 const phoneNumberSchema = z.object({
   id: z.number().int().positive().optional(),
-  name: z.enum(["Work", "Home", "Mobile", "Fax", "Pager", "Skype", "Other"]).default("Work"),
+  name: phoneNumberNameSchema.optional(),
   number: z.string().trim().min(3).max(50),
   default_number: z.boolean().optional(),
 });
 const addressSchema = z.object({
   id: z.number().int().positive().optional(),
-  name: z.enum(["Work", "Home", "Billing", "Other"]).default("Work"),
+  name: addressNameSchema.optional(),
   street: z.string().trim().max(500).optional(), city: z.string().trim().max(255).optional(),
   province: z.string().trim().max(255).optional(), postal_code: z.string().trim().max(50).optional(),
   country: z.string().trim().max(255).optional(),
 });
 const webSiteSchema = z.object({
   id: z.number().int().positive().optional(),
-  name: z.enum(["Work", "Personal", "Twitter", "Facebook", "LinkedIn", "Instant Messenger", "Other"]).default("Work"),
+  name: webSiteNameSchema.optional(),
   address: z.string().url().max(2048), default_web_site: z.boolean().optional(),
 });
-const createEmailAddressSchema = emailAddressSchema.omit({ id: true });
-const createPhoneNumberSchema = phoneNumberSchema.omit({ id: true });
-const createAddressSchema = addressSchema.omit({ id: true });
-const createWebSiteSchema = webSiteSchema.omit({ id: true });
+const createEmailAddressSchema = emailAddressSchema.omit({ id: true }).extend({ name: emailAddressNameSchema.default("Work") });
+const createPhoneNumberSchema = phoneNumberSchema.omit({ id: true }).extend({ name: phoneNumberNameSchema.default("Work") });
+const createAddressSchema = addressSchema.omit({ id: true }).extend({ name: addressNameSchema.default("Work") });
+const createWebSiteSchema = webSiteSchema.omit({ id: true }).extend({ name: webSiteNameSchema.default("Work") });
 const contactFieldsSchema = {
   type: contactTypeSchema.optional(),
   name: z.string().trim().min(1).max(255).optional(),
@@ -130,7 +134,12 @@ function buildContactData(input: Record<string, unknown>): Record<string, unknow
     data.custom_field_values = buildNewCustomFieldValues(input.custom_field_values);
   }
   for (const key of ["email_addresses", "phone_numbers", "addresses", "web_sites"] as const) {
-    if (input[key] !== undefined) data[key] = input[key];
+    if (input[key] !== undefined) {
+      data[key] = (input[key] as Array<Record<string, unknown>>).map((entry) => ({
+        ...entry,
+        ...(entry.name === undefined && { name: "Work" }),
+      }));
+    }
   }
   return data;
 }
@@ -240,7 +249,7 @@ function buildContactUpdateData(input: Record<string, unknown>, current: any): R
   if (input.addresses !== undefined) {
     data.addresses = (input.addresses as Array<Record<string, unknown>>).map((changes) => {
       const id = changes.id as number | undefined;
-      if (id === undefined) return changes;
+      if (id === undefined) return { name: "Work", ...changes };
       const entry = existingEntry(current.addresses ?? [], "address", false, id);
       return { ...entry, ...changes, id: entry.id };
     });
@@ -281,7 +290,7 @@ function validatePluralContactEntries(
 ): Array<Record<string, unknown>> {
   return (changes as Array<Record<string, unknown>>).map((entryChanges) => {
     const id = entryChanges.id as number | undefined;
-    if (id === undefined) return entryChanges;
+    if (id === undefined) return { name: "Work", ...entryChanges };
     const current = existingEntry(currentEntries, kind, false, id);
     return { ...current, ...entryChanges, id: current.id };
   });

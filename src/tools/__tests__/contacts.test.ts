@@ -356,6 +356,29 @@ describe("controlled contact writes", () => {
     expect(mockClioPatch).not.toHaveBeenCalled();
   });
 
+  it("preserves existing association labels and defaults only new entries to Work", async () => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",
+      email_addresses: [{ id: 11, name: "Home", address: "old@example.test" }],
+      phone_numbers: [{ id: 12, name: "Mobile", number: "4165550000" }],
+      addresses: [{ id: 13, name: "Other", street: "1 Old Street" }],
+      web_sites: [{ id: 14, name: "Personal", address: "https://old.example.test" }],
+    } });
+    const preview = JSON.parse((await getHandlers().update_contact({
+      contact_id: 42,
+      email_addresses: [{ id: 11, address: "new@example.test" }, { address: "new-work@example.test" }],
+      phone_numbers: [{ id: 12, number: "4165550100" }, { number: "4165550200" }],
+      addresses: [{ id: 13, city: "Toronto" }, { street: "2 New Street" }],
+      web_sites: [{ id: 14, address: "https://new.example.test" }, { address: "https://work.example.test" }],
+    })).content[0].text);
+    expect(preview.proposal.changes).toMatchObject({
+      email_addresses: [{ id: 11, name: "Home" }, { name: "Work" }],
+      phone_numbers: [{ id: 12, name: "Mobile" }, { name: "Work" }],
+      addresses: [{ id: 13, name: "Other" }, { name: "Work" }],
+      web_sites: [{ id: 14, name: "Personal" }, { name: "Work" }],
+    });
+  });
+
   it("updates an existing custom field by its composite value ID", async () => {
     const current = { data: {
       id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",

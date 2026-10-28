@@ -63,7 +63,7 @@ export function registerNoteTools(server: McpServer): void {
         });
         const note = data.data;
 
-        await appendAuditLog({
+        const auditOk = await appendAuditLog({
           tool: "create_note",
           action: "create", confirmation_state: "confirmed",
           args: { confirm_write: true, matter_id },
@@ -76,6 +76,7 @@ export function registerNoteTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({
               success: true,
+              audit_recorded: auditOk,
               note: {
                 id: note.id,
                 subject: note.subject,
