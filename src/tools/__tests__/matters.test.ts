@@ -347,6 +347,28 @@ describe("controlled matter writes", () => {
     } }, { "If-Match": "matter-v1" });
   });
 
+  it("rejects duplicate existing relationship IDs before preview authorization", async () => {
+    const current = {
+      ...MATTER,
+      relationships: [{ id: 501, description: "Old role", contact: { id: 2, name: "Synthetic Related" } }],
+    };
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath === "/matters/42.json") return { data: current };
+      if (requestPath === "/contacts/2.json") return { data: { id: 2, name: "Synthetic Related", type: "Person" } };
+      throw new Error(`unexpected path ${requestPath}`);
+    });
+    const result = await handlers.update_matter({
+      matter_id: 42,
+      relationships: [
+        { id: 501, contact_id: 2, description: "Primary contact" },
+        { id: 501, contact_id: 2, description: "Billing contact" },
+      ],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("relationship ID may be supplied only once");
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
   it("rejects foreign relationship IDs and relationship IDs on creation", async () => {
     const current = {
       ...MATTER,

@@ -157,8 +157,13 @@ async function resolveMatterReferences(input: Record<string, unknown>, currentMa
   if (input.relationships !== undefined) {
     const validated = [];
     const contacts = new Map<number, any>();
+    const relationshipIds = new Set<number>();
     for (const relationship of input.relationships as Array<{ id?: number; contact_id: number; description: string }>) {
       if (relationship.id !== undefined) {
+        if (relationshipIds.has(relationship.id)) {
+          throw new Error("A matter relationship ID may be supplied only once per mutation.");
+        }
+        relationshipIds.add(relationship.id);
         if (!currentMatter) {
           throw new Error("Relationship IDs cannot be supplied when creating a matter.");
         }

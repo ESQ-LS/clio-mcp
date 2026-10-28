@@ -10,6 +10,38 @@ import {
 
 const CALENDAR_FIELDS = "id,summary,description,start_at,end_at,matter{id,display_number},attendees{id,name}";
 
+function isCalendarTimestamp(value: string): boolean {
+  const match = /^(\d{4}-\d{2}-\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value);
+  if (!match) return false;
+  const parsedDate = new Date(`${match[1]}T00:00:00Z`);
+  if (Number.isNaN(parsedDate.valueOf()) || parsedDate.toISOString().slice(0, 10) !== match[1]) return false;
+  if (match[2] === undefined) return true;
+  return Number(match[2]) <= 23 && Number(match[3]) <= 59 &&
+    (match[4] === undefined || Number(match[4]) <= 59);
+}
+
+const calendarTimestampSchema = z.string().refine(isCalendarTimestamp, {
+  message: "Must be a real local date or datetime.",
+});
+
+function assertCalendarTimestamps(...values: string[]): void {
+  if (values.some((value) => !isCalendarTimestamp(value))) {
+    throw new Error("Calendar dates must be real local dates or datetimes.");
+  }
+}
+
+function defaultContactEmail(emailAddresses: unknown): string | undefined {
+  const usable = Array.isArray(emailAddresses)
+    ? emailAddresses.filter((entry: any) => typeof entry?.address === "string" && entry.address.trim())
+    : [];
+  if (usable.length === 0) return undefined;
+  const defaults = usable.filter((entry: any) => entry.default_email === true);
+  if (defaults.length !== 1) {
+    throw new Error("A Contact attendee with email addresses must have exactly one usable default email address.");
+  }
+  return defaults[0].address.trim();
+}
+
 export function toIso(input: string, endOfDay = false): string {
   if (!/T/.test(input)) {
     return endOfDay ? `${input}T23:59:59` : `${input}T00:00:00`;
@@ -109,8 +141,8 @@ export function registerCalendarTools(server: McpServer): void {
       description: "Dry-run by default. Validates the calendar, matter, and attendees and displays the complete event, including whether email notifications will be sent. A production write requires confirm_write: true plus the unexpired preview_token from an unchanged proposal.",
       inputSchema: {
         summary: z.string().min(1).describe("Short title of the event"),
-        start_at: z.string().regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/).describe("Date or datetime in local time — YYYY-MM-DD, YYYY-MM-DDTHH:MM, or YYYY-MM-DDTHH:MM:SS"),
-        end_at: z.string().regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/).describe("Date or datetime in local time — YYYY-MM-DD, YYYY-MM-DDTHH:MM, or YYYY-MM-DDTHH:MM:SS"),
+        start_at: calendarTimestampSchema.describe("Date or datetime in local time — YYYY-MM-DD, YYYY-MM-DDTHH:MM, or YYYY-MM-DDTHH:MM:SS"),
+        end_at: calendarTimestampSchema.describe("Date or datetime in local time — YYYY-MM-DD, YYYY-MM-DDTHH:MM, or YYYY-MM-DDTHH:MM:SS"),
         calendar_owner_id: z.number().int().positive().describe("Calendar ID to post this entry to — use list_calendars to find available IDs"),
         description: z.string().optional().describe("Detailed description of the event"),
         all_day: z.boolean().optional().describe("Whether the event spans the full day"),
@@ -129,6 +161,7 @@ export function registerCalendarTools(server: McpServer): void {
     async ({ summary, start_at, end_at, calendar_owner_id, description, all_day, matter_id, location, send_email_notification, attendees: requestedAttendees, confirm_write, preview_token }) => {
       let writeAttempted = false;
       try {
+        assertCalendarTimestamps(start_at, end_at);
         assertCalendarDateFloor(start_at, end_at);
         const attendeeKeys = (requestedAttendees ?? []).map(({ type, id }) => `${type}:${id}`);
         if (new Set(attendeeKeys).size !== attendeeKeys.length) throw new Error("attendees must be unique by type and ID.");
@@ -164,8 +197,7 @@ export function registerCalendarTools(server: McpServer): void {
           const record = (await clioGet(`/${endpoint}/${attendee.id}.json`, { fields }))?.data;
           if (record?.id !== attendee.id) throw new Error(`${attendee.type} attendee ${attendee.id} validation failed.`);
           const emailAddress = attendee.type === "Contact"
-            ? (record.email_addresses ?? []).find((entry: any) =>
-                typeof entry?.address === "string" && entry.address.trim())?.address
+            ? defaultContactEmail(record.email_addresses)
             : undefined;
           attendees.push({
             id: record.id,
