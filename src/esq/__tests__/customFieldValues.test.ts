@@ -72,6 +72,41 @@ describe("custom-field reference validation", () => {
     ], "Matter")).rejects.toThrow("could not be validated");
   });
 
+  it("validates scalar values against each custom-field definition", async () => {
+    const cases = [
+      { field_type: "text_line", valid: "Synthetic code", invalid: "two\nlines" },
+      { field_type: "text_area", valid: "Synthetic\nnotes", invalid: 42 },
+      { field_type: "numeric", valid: "42", invalid: "4.2" },
+      { field_type: "currency", valid: "42.50", invalid: "forty" },
+      { field_type: "date", valid: "2026-02-28", invalid: "2026-02-31" },
+      { field_type: "time", valid: "23:59:30", invalid: "25:00" },
+      { field_type: "checkbox", valid: true, invalid: "true" },
+      { field_type: "email", valid: "synthetic@example.test", invalid: "not-an-email" },
+      { field_type: "url", valid: "https://example.test/path", invalid: "not a url" },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const id = index + 100;
+      mockClioGet.mockResolvedValue({ data: {
+        id, name: `Synthetic ${testCase.field_type}`, field_type: testCase.field_type, parent_type: "Contact",
+      } });
+      await expect(resolveCustomFieldValueDetails([
+        { custom_field_id: id, value: testCase.valid },
+      ], "Contact")).resolves.toHaveLength(1);
+      await expect(resolveCustomFieldValueDetails([
+        { custom_field_id: id, value: testCase.invalid },
+      ], "Contact")).rejects.toThrow();
+    }
+  });
+
+  it("rejects unsupported custom-field types before preview authorization", async () => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 200, name: "Synthetic unknown", field_type: "future_type", parent_type: "Contact",
+    } });
+    await expect(resolveCustomFieldValueDetails([
+      { custom_field_id: 200, value: "synthetic" },
+    ], "Contact")).rejects.toThrow("Unsupported custom field type");
+  });
+
   it("bounds concurrent definition and reference lookups", async () => {
     let active = 0;
     let peak = 0;

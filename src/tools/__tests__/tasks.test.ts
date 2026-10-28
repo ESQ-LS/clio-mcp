@@ -69,6 +69,46 @@ describe("controlled task writes", () => {
     } }, { "If-Match": "task-v1" });
   });
 
+  it("discloses every firm user removed by singular assignee replacement", async () => {
+    mockClioGet.mockImplementation(async (path: string, params?: Record<string, string>) => {
+      if (path === "/tasks/1.json") {
+        expect(params?.fields).toContain("assignees{id,name}");
+        return { data: {
+          ...TASK,
+          assignee: { id: 41, name: "Synthetic Primary" },
+          assignees: [
+            { id: 41, name: "Synthetic Primary" },
+            { id: 42, name: "Synthetic Lawyer" },
+            { id: 43, name: "Synthetic Reviewer" },
+          ],
+        } };
+      }
+      if (path === "/users/42.json") return { data: { id: 42, name: "Synthetic Lawyer", enabled: true } };
+      throw new Error(`unexpected path ${path}`);
+    });
+    const preview = JSON.parse((await handlers.get("update_task")!({ task_id: 1, assignee_id: 42 })).content[0].text);
+    expect(preview.proposal.current.assignees).toHaveLength(3);
+    expect(preview.proposal.assignee_replacement).toEqual({
+      warning: "Replacing the singular assignee will remove the other firm-user assignees.",
+      removed_assignees: [
+        { id: 41, name: "Synthetic Primary" },
+        { id: 43, name: "Synthetic Reviewer" },
+      ],
+    });
+  });
+
+  it("rejects impossible task dates before preview authorization", async () => {
+    const created = await handlers.get("create_task")!({
+      matter_id: 99, name: "Draft contract", description: "Synthetic task",
+      priority: "Normal", due_date: "2026-02-31",
+    });
+    const updated = await handlers.get("update_task")!({ task_id: 1, due_date: "2026-13-01" });
+    expect(created.isError).toBe(true);
+    expect(updated.isError).toBe(true);
+    expect(mockClioPost).not.toHaveBeenCalled();
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
   it("previews and conditionally completes a task", async () => {
     const preview = JSON.parse((await handlers.get("complete_task")!({ task_id: 1 })).content[0].text);
     expect(mockClioPatch).not.toHaveBeenCalled();

@@ -452,8 +452,15 @@ export function registerMatterTools(server: McpServer): void {
         if (typeof current.etag !== "string" || !current.etag.trim()) {
           throw new Error("Clio did not return a matter ETag; no update can be performed safely.");
         }
-        data = buildMatterUpdateData(input, current);
-        const references = await resolveMatterReferences(input, current);
+        const normalizedInput = {
+          ...input,
+          ...(input.status !== undefined && input.status !== current.status && input.status === "open" && input.open_date === undefined && { open_date: firmCalendarDate() }),
+          ...(input.status !== undefined && input.status !== current.status && input.status === "pending" && input.pending_date === undefined && { pending_date: firmCalendarDate() }),
+          ...(input.status !== undefined && input.status !== current.status && input.status === "closed" && input.close_date === undefined && { close_date: firmCalendarDate() }),
+        };
+        data = buildMatterUpdateData(normalizedInput, current);
+        fieldsChanged = Object.keys(data);
+        const references = await resolveMatterReferences(normalizedInput, current);
         const customFieldValueDetails = input.custom_field_values === undefined
           ? undefined
           : await resolveCustomFieldValueDetails(input.custom_field_values, "Matter");

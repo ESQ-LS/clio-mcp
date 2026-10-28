@@ -12,16 +12,17 @@ import {
   CLIO_UPDATE_TOOL_ANNOTATIONS,
 } from "./annotations.js";
 
-const TASK_FIELDS = "id,etag,name,description,priority,due_at,status,completed_at,assignee{id,name},matter{id,display_number,description,status},reminders{id,notification_method}";
+const TASK_FIELDS = "id,etag,name,description,priority,due_at,status,completed_at,assignee{id,name},assignees{id,name},matter{id,display_number,description,status},reminders{id,notification_method}";
 
 const STATUS_MAP: Record<string, string> = { Pending: "pending", Complete: "complete", "In Progress": "in_progress", "In Review": "in_review", "Draft": "draft" };
+const taskDateSchema = z.string().date();
 
 function buildTaskData(input: Record<string, unknown>): Record<string, unknown> {
   const data: Record<string, unknown> = {};
   for (const key of ["name", "description", "priority"] as const) {
     if (input[key] !== undefined) data[key] = input[key];
   }
-  if (input.due_date !== undefined) data.due_at = `${input.due_date}T00:00:00Z`;
+  if (input.due_date !== undefined) data.due_at = `${taskDateSchema.parse(input.due_date)}T00:00:00Z`;
   if (input.status !== undefined) data.status = STATUS_MAP[input.status as string];
   if (input.matter_id !== undefined) data.matter = { id: input.matter_id };
   if (input.assignee_id !== undefined) data.assignee = { id: input.assignee_id, type: "User" };
@@ -36,8 +37,8 @@ export function registerTaskTools(server: McpServer): void {
       inputSchema: {
         matter_id: z.number().int().positive().optional().describe("Filter tasks by matter ID"),
         status: z.enum(["Pending", "Complete", "In Progress", "In Review", "Draft"]).optional().describe("Filter by task status"),
-        due_date_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("ISO date (YYYY-MM-DD) — tasks due on or after this date"),
-        due_date_end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("ISO date (YYYY-MM-DD) — tasks due on or before this date"),
+        due_date_start: taskDateSchema.optional().describe("ISO date (YYYY-MM-DD) — tasks due on or after this date"),
+        due_date_end: taskDateSchema.optional().describe("ISO date (YYYY-MM-DD) — tasks due on or before this date"),
         limit: z.number().int().min(1).max(200).default(25).describe("Max results to return (1-200)"),
       },
       annotations: CLIO_READ_ONLY_TOOL_ANNOTATIONS,
@@ -102,7 +103,7 @@ export function registerTaskTools(server: McpServer): void {
         name: z.string().min(1).describe("Task name / description"),
         description: z.string().min(2).describe("Detailed description of the task"),
         priority: z.enum(["High", "Normal", "Low"]).default("Normal").describe("Task priority"),
-        due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("ISO date (YYYY-MM-DD) when the task is due"),
+        due_date: taskDateSchema.optional().describe("ISO date (YYYY-MM-DD) when the task is due"),
         assignee_id: z.number().int().positive().optional().describe("Clio user ID to assign the task to"),
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
@@ -195,7 +196,7 @@ export function registerTaskTools(server: McpServer): void {
         name: z.string().min(1).optional().describe("New task name"),
         description: z.string().optional().describe("New task description"),
         priority: z.enum(["High", "Normal", "Low"]).optional().describe("New priority"),
-        due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("ISO date (YYYY-MM-DD) for due date"),
+        due_date: taskDateSchema.optional().describe("ISO date (YYYY-MM-DD) for due date"),
         status: z.enum(["Pending", "Complete", "In Progress", "In Review", "Draft"]).optional().describe("New task status"),
         assignee_id: z.number().int().positive().optional().describe("Clio user ID to reassign the task to"),
         confirm_write: z.boolean().default(false),
@@ -217,9 +218,21 @@ export function registerTaskTools(server: McpServer): void {
         if (assignee_id !== undefined && (assignee?.id !== assignee_id || assignee.enabled === false)) throw new Error("Assignee validation failed.");
         const proposal = {
           record_id: task_id, current_etag: current.etag,
-          current: { name: current.name, description: current.description, priority: current.priority, due_at: current.due_at, status: current.status, assignee: current.assignee, matter: current.matter },
+          current: {
+            name: current.name, description: current.description, priority: current.priority,
+            due_at: current.due_at, status: current.status, assignee: current.assignee,
+            assignees: current.assignees ?? [], matter: current.matter,
+          },
           changes: taskData,
           assignee: assignee ? { id: assignee.id, name: assignee.name } : null,
+          ...(assignee_id !== undefined && (current.assignees?.length ?? 0) > 1 && {
+            assignee_replacement: {
+              warning: "Replacing the singular assignee will remove the other firm-user assignees.",
+              removed_assignees: current.assignees
+                .filter((candidate: any) => candidate.id !== assignee_id)
+                .map((candidate: any) => ({ id: candidate.id, name: candidate.name })),
+            },
+          }),
         };
         if (!confirm_write) {
           const auditOk = await appendAuditLog({

@@ -48,6 +48,9 @@ GitHub Issues is disabled in this repository, so this file is the project tracke
 - [x] Preserve existing labels on plural contact association updates, return
   pending matter dates, and disclose failed final audit persistence after
   otherwise successful note, task, calendar, and document writes.
+- [x] Disclose multi-assignee task replacement, validate scalar custom-field
+  formats and task dates before preview authorization, and bind lifecycle dates
+  into matter status-transition previews.
 - [ ] Step 4: complete review, merge only after approval, select exact tools in
   `ESQ_WRITE_TOOLS`, and redeploy only with separate authorization.
 - [ ] Step 5: refresh the plugin catalog and verify discovery and write authorization.
@@ -72,7 +75,7 @@ protect against edits that race with the write. Tokens are specific to a Clio
 user, API region, and server process; after a restart or replica change, preview again.
 No live Clio records are required to complete step 1.
 
-Expanded-branch validation: 21 test files / 189 tests passed; the production
+Expanded-branch validation: 21 test files / 195 tests passed; the production
 TypeScript build, package dry run, `git diff --check`, and dependency audit
 (zero vulnerabilities) passed. Tests use synthetic records and mocked API
 calls. Zod 4.6.7 passed the full suite and build; `body-parser` and `qs` resolve

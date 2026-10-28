@@ -246,6 +246,7 @@ describe("controlled matter writes", () => {
     const args = { matter_id: 42, status: "open" as const, confirm_write: false };
     const preview = JSON.parse((await handlers.update_matter(args)).content[0].text);
     expect(preview.proposal.current_updated_at).toBe(MATTER.updated_at);
+    expect(preview.proposal.changes.open_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(mockClioPatch).not.toHaveBeenCalled();
 
     const confirmed = await handlers.update_matter({
@@ -254,7 +255,31 @@ describe("controlled matter writes", () => {
       preview_token: preview.preview_token,
     });
     expect(JSON.parse(confirmed.content[0].text).write_performed).toBe(true);
-    expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: { status: "open" } }, { "If-Match": "matter-v1" });
+    expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: {
+      status: "open", open_date: preview.proposal.changes.open_date,
+    } }, { "If-Match": "matter-v1" });
+  });
+
+  it("binds the matching lifecycle date into every status-transition preview", async () => {
+    for (const transition of [
+      { current: "pending", status: "open", date: "open_date" },
+      { current: "open", status: "pending", date: "pending_date" },
+      { current: "open", status: "closed", date: "close_date" },
+    ] as const) {
+      mockClioGet.mockResolvedValue({ data: { ...MATTER, status: transition.current } });
+      const preview = JSON.parse((await handlers.update_matter({
+        matter_id: 42, status: transition.status,
+      })).content[0].text);
+      expect(preview.proposal.changes[transition.date]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+
+  it("preserves an explicit lifecycle date on a status transition", async () => {
+    mockClioGet.mockResolvedValue({ data: { ...MATTER, status: "open" } });
+    const preview = JSON.parse((await handlers.update_matter({
+      matter_id: 42, status: "closed", close_date: "2026-10-01",
+    })).content[0].text);
+    expect(preview.proposal.changes.close_date).toBe("2026-10-01");
   });
 
   it("requires and forwards the matter-number reset control for display-number updates", async () => {
@@ -367,7 +392,9 @@ describe("controlled matter writes", () => {
     mockClioPatch.mockRejectedValue(new MockClioApiError(412, "Precondition failed"));
     const result = await handlers.update_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(result.isError).toBe(true);
-    expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: { status: "open" } }, { "If-Match": "matter-v1" });
+    expect(mockClioPatch).toHaveBeenCalledWith("/matters/42.json", { data: {
+      status: "open", open_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    } }, { "If-Match": "matter-v1" });
     expect(JSON.parse(result.content[0].text).error).toContain("412");
   });
 

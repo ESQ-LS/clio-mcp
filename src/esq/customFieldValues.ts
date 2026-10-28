@@ -17,6 +17,64 @@ type CustomFieldDefinition = {
   picklist_options?: Array<{ id: number; option: string }>;
 };
 
+function isCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function isIsoTime(value: string): boolean {
+  const match = /^(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-](\d{2}):(\d{2}))?$/.exec(value);
+  if (!match) return false;
+  return Number(match[1]) <= 23 && Number(match[2]) <= 59 &&
+    (match[3] === undefined || Number(match[3]) <= 59) &&
+    (match[4] === undefined || (Number(match[4]) <= 23 && Number(match[5]) <= 59));
+}
+
+function validateScalarValue(value: unknown, fieldType: string): void {
+  const stringValue = typeof value === "string" ? value : null;
+  switch (fieldType) {
+    case "text_line":
+      if (stringValue === null || /[\r\n]/.test(stringValue)) throw new Error("text_line custom field values must be single-line strings.");
+      return;
+    case "text_area":
+      if (stringValue === null) throw new Error("text_area custom field values must be strings.");
+      return;
+    case "numeric": {
+      const parsed = typeof value === "number" ? value : stringValue !== null && /^\d+$/.test(stringValue) ? Number(stringValue) : NaN;
+      if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error("numeric custom field values must be non-negative whole numbers.");
+      return;
+    }
+    case "currency": {
+      const parsed = typeof value === "number" ? value : stringValue !== null && /^-?\d+(?:\.\d+)?$/.test(stringValue) ? Number(stringValue) : NaN;
+      if (!Number.isFinite(parsed)) throw new Error("currency custom field values must be finite monetary amounts.");
+      return;
+    }
+    case "date":
+      if (stringValue === null || !isCalendarDate(stringValue)) throw new Error("date custom field values must be real ISO dates (YYYY-MM-DD).");
+      return;
+    case "time":
+      if (stringValue === null || !isIsoTime(stringValue)) throw new Error("time custom field values must be valid ISO times.");
+      return;
+    case "checkbox":
+      if (typeof value !== "boolean") throw new Error("checkbox custom field values must be booleans.");
+      return;
+    case "email":
+      if (stringValue === null || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(stringValue)) throw new Error("email custom field values must be valid email addresses.");
+      return;
+    case "url":
+      if (stringValue === null) throw new Error("url custom field values must be valid URLs.");
+      try {
+        new URL(stringValue);
+      } catch {
+        throw new Error("url custom field values must be valid URLs.");
+      }
+      return;
+    default:
+      throw new Error(`Unsupported custom field type: ${fieldType}.`);
+  }
+}
+
 function normalizedRequests(value: unknown): RequestedCustomFieldValue[] {
   if (!Array.isArray(value)) throw new Error("Malformed requested custom_field_values.");
   const seen = new Set<number>();
@@ -129,6 +187,8 @@ export async function resolveCustomFieldValueDetails(
         referenceCache.set(key, resolution);
       }
       detail.resolved_value = await resolution;
+    } else {
+      validateScalarValue(value, definition.field_type);
     }
 
     return detail;
