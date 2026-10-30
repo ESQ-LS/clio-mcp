@@ -52,7 +52,7 @@ const matterFieldsSchema = {
   responsible_attorney_id: z.number().int().positive().optional().describe("Clio user ID of the responsible attorney"),
   originating_attorney_id: z.number().int().positive().optional().describe("Clio user ID of the originating attorney"),
   responsible_staff_id: z.number().int().positive().optional().describe("Clio user ID of responsible staff"),
-  matter_stage_id: z.number().int().positive().optional().describe("Clio matter stage ID"),
+  matter_stage_id: z.number().int().positive().optional().describe("Unsupported by controlled writes because stage changes can trigger undisclosed client notifications and automated workflows"),
   group_id: z.number().int().positive().optional().describe("Clio group ID"),
   location: z.string().trim().max(500).optional().describe("Matter location"),
   client_reference: z.string().trim().max(255).optional().describe("External reference for cross-linking systems"),
@@ -143,24 +143,6 @@ async function resolveMatterReferences(input: Record<string, unknown>, currentMa
       if (response?.data?.id !== input[inputKey] || response.data.enabled === false) throw new Error(`${outputKey} validation failed.`);
       refs[outputKey] = { id: response.data.id, name: response.data.name };
     }
-  }
-  if (input.matter_stage_id !== undefined) {
-    const practiceAreaId = input.practice_area_id ?? currentMatter?.practice_area?.id;
-    if (!Number.isInteger(practiceAreaId) || Number(practiceAreaId) <= 0) {
-      throw new Error("Matter-stage validation requires a selected or current practice area.");
-    }
-    const response = await clioGet("/matter_stages.json", {
-      "ids[]": String(input.matter_stage_id),
-      practice_area_id: String(practiceAreaId),
-      fields: "id,name,practice_area{id,name}",
-      limit: "2",
-    });
-    const stages = Array.isArray(response?.data) ? response.data : [];
-    const stage = stages.find((candidate: any) => candidate?.id === input.matter_stage_id);
-    if (!stage || stage.practice_area?.id !== practiceAreaId) {
-      throw new Error("Matter-stage validation failed for the selected practice area.");
-    }
-    refs.matter_stage = { id: stage.id, name: stage.name };
   }
   if (input.group_id !== undefined) {
     const response = await clioGet(`/groups/${input.group_id}.json`, { fields: "id,name" });
@@ -381,6 +363,9 @@ export function registerMatterTools(server: McpServer): void {
       let writeAttempted = false;
       let fieldsChanged: string[] = [];
       try {
+        if (input.matter_stage_id !== undefined) {
+          throw new Error("matter_stage_id is not supported because stage changes can notify clients or trigger automated workflows outside the confirmed preview.");
+        }
         const today = firmCalendarDate();
         const normalized = {
           ...input,
@@ -456,6 +441,9 @@ export function registerMatterTools(server: McpServer): void {
       let writeAttempted = false;
       let fieldsChanged: string[] = [];
       try {
+        if (input.matter_stage_id !== undefined) {
+          throw new Error("matter_stage_id is not supported because stage changes can notify clients or trigger automated workflows outside the confirmed preview.");
+        }
         if (input.display_number !== undefined && input.reset_matter_number !== true) {
           throw new Error("reset_matter_number must be true when updating display_number.");
         }

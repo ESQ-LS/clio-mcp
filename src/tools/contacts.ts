@@ -248,6 +248,7 @@ function buildContactUpdateData(input: Record<string, unknown>, current: any): R
   }
   if (input.addresses !== undefined) {
     assertUniqueNestedIds(input.addresses, "address");
+    assertAssociationLimit(current.addresses ?? [], input.addresses, "address");
     data.addresses = (input.addresses as Array<Record<string, unknown>>).map((changes) => {
       const id = changes.id as number | undefined;
       if (id === undefined) return { name: "Work", ...changes };
@@ -290,12 +291,23 @@ function validatePluralContactEntries(
   kind: string,
 ): Array<Record<string, unknown>> {
   assertUniqueNestedIds(changes, kind);
+  assertAssociationLimit(currentEntries, changes, kind);
   return (changes as Array<Record<string, unknown>>).map((entryChanges) => {
     const id = entryChanges.id as number | undefined;
     if (id === undefined) return { name: "Work", ...entryChanges };
     const current = existingEntry(currentEntries, kind, false, id);
     return { ...current, ...entryChanges, id: current.id };
   });
+}
+
+function assertAssociationLimit(currentEntries: unknown, changes: unknown, kind: string): void {
+  if (!Array.isArray(currentEntries) || !Array.isArray(changes)) {
+    throw new Error(`Malformed contact ${kind} response.`);
+  }
+  const additions = changes.filter((entry) => entry?.id === undefined).length;
+  if (currentEntries.length + additions > 20) {
+    throw new Error(`Contact ${kind} entries cannot exceed Clio's 20-entry limit.`);
+  }
 }
 
 function assertUniqueNestedIds(changes: unknown, kind: string): void {
@@ -513,6 +525,9 @@ export function registerContactTools(server: McpServer): void {
       let writeAttempted = false;
       let fieldsChanged: string[] = [];
       try {
+        if (input.type === "Person" && input.first_name === undefined && input.last_name === undefined) {
+          throw new Error("Person contacts require an explicit first_name or last_name before preview.");
+        }
         assertNoConflictingContactAliases(input);
         assertNoNestedAssociationIdsForCreate(input);
         const company = await validateContactCompany(input.company_id);

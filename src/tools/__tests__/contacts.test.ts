@@ -161,7 +161,7 @@ describe("controlled contact writes", () => {
     mockClioPost.mockResolvedValue({ data: { id: 44, name: "Synthetic Person", type: "Person" } });
     const handlers = getHandlers();
     const args = {
-      type: "Person", name: "Synthetic Person", prefix: "Ms.", middle_name: "Example",
+      type: "Person", name: "Synthetic Person", first_name: "Synthetic", prefix: "Ms.", middle_name: "Example",
       date_of_birth: "1980-01-02", web_site: "https://example.test",
       custom_field_values: [{ custom_field_id: 7001, value: "SYN-123" }],
       confirm_write: false,
@@ -186,7 +186,7 @@ describe("controlled contact writes", () => {
     mockClioPost.mockResolvedValue({ data: { id: 45, name: "Synthetic Person", type: "Person" } });
     const handlers = getHandlers();
     const args = {
-      type: "Person", name: "Synthetic Person",
+      type: "Person", name: "Synthetic Person", first_name: "Synthetic",
       email_addresses: [
         { name: "Work", address: "work@example.test", default_email: true },
         { name: "Home", address: "home@example.test" },
@@ -208,13 +208,23 @@ describe("controlled contact writes", () => {
   it("rejects conflicting singular and plural contact aliases", async () => {
     const handlers = getHandlers();
     const result = await handlers.create_contact({
-      type: "Person", name: "Synthetic Person", email: "one@example.test",
+      type: "Person", name: "Synthetic Person", first_name: "Synthetic", email: "one@example.test",
       email_addresses: [{ name: "Work", address: "two@example.test" }],
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("not both");
     expect(mockClioPost).not.toHaveBeenCalled();
     expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({ outcome: "error" }));
+  });
+
+  it("requires an explicit name component for Person contacts before preview", async () => {
+    const result = await getHandlers().create_contact({
+      type: "Person", name: "Unparseable synthetic label",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("explicit first_name or last_name");
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPost).not.toHaveBeenCalled();
   });
 
   it("rejects nested association IDs when creating contacts", async () => {
@@ -400,6 +410,28 @@ describe("controlled contact writes", () => {
       addresses: [{ id: 13, name: "Other" }, { name: "Work" }],
       web_sites: [{ id: 14, name: "Personal" }, { name: "Work" }],
     });
+  });
+
+  it("counts existing associations before accepting plural additions", async () => {
+    const existing = Array.from({ length: 19 }, (_, index) => ({ id: index + 1, name: "Work" }));
+    mockClioGet.mockResolvedValue({ data: {
+      id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",
+      email_addresses: existing.map((entry, index) => ({ ...entry, address: `old${index}@example.test` })),
+      phone_numbers: existing.map((entry, index) => ({ ...entry, number: `416555${String(index).padStart(4, "0")}` })),
+      addresses: existing.map((entry, index) => ({ ...entry, street: `${index + 1} Old Street` })),
+    } });
+    const handlers = getHandlers();
+    const cases = [
+      { email_addresses: [{ address: "new1@example.test" }, { address: "new2@example.test" }] },
+      { phone_numbers: [{ number: "4165559001" }, { number: "4165559002" }] },
+      { addresses: [{ street: "20 New Street" }, { street: "21 New Street" }] },
+    ];
+    for (const changes of cases) {
+      const result = await handlers.update_contact({ contact_id: 42, ...changes });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("20-entry limit");
+    }
+    expect(mockClioPatch).not.toHaveBeenCalled();
   });
 
   it("updates an existing custom field by its composite value ID", async () => {

@@ -10,9 +10,9 @@ import {
 import { appendAuditLog } from "../utils/auditLog.js";
 import { clioGet, clioPatch, clioPost, extractNextPageToken } from "../utils/clioClient.js";
 import {
-  CLIO_CONTROLLED_UPDATE_TOOL_ANNOTATIONS,
   CLIO_CREATE_TOOL_ANNOTATIONS,
   CLIO_READ_ONLY_TOOL_ANNOTATIONS,
+  CLIO_UPDATE_TOOL_ANNOTATIONS,
 } from "./annotations.js";
 
 const EXPENSE_FIELDS =
@@ -467,7 +467,7 @@ export function registerControlledExpenseTools(server: McpServer): void {
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },
-      annotations: CLIO_CONTROLLED_UPDATE_TOOL_ANNOTATIONS,
+      annotations: CLIO_UPDATE_TOOL_ANNOTATIONS,
     },
     async ({ activity_id, etag, allocation_matter_id, date, amount, expense_category_id, description, source_reference, billing_status, tax_setting, cost_type, confirm_write, preview_token }) => {
       let writeAttempted = false;

@@ -63,13 +63,13 @@ const ADDITIVE_WRITE_TOOLS = [
 const DESTRUCTIVE_UPDATE_TOOLS = [
   "complete_task",
   "update_contact",
+  "update_expense_entry",
   "update_matter",
   "update_task",
 ] as const;
 
 const NONDESTRUCTIVE_UPDATE_TOOLS = [
   "update_time_entry",
-  "update_expense_entry",
 ] as const;
 
 afterEach(() => {
