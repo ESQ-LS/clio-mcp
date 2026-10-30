@@ -48,6 +48,7 @@ const MATTER = {
   client: CLIENT.data,
   open_date: "2026-10-14",
   updated_at: "2026-10-14T12:00:00Z",
+  practice_area: { id: 5, name: "Synthetic practice" },
 };
 const CREATE_ARGS = {
   client_id: 1,
@@ -184,10 +185,14 @@ describe("controlled matter writes", () => {
   });
 
   it("includes routine assignment, lifecycle, deadline, and custom fields", async () => {
-    mockClioGet.mockImplementation(async (path: string) => {
+    mockClioGet.mockImplementation(async (path: string, params?: Record<string, string>) => {
       if (path === "/contacts/1.json") return CLIENT;
       if (path === "/users/10.json") return { data: { id: 10, name: "Synthetic Staff", enabled: true } };
-      if (path === "/matter_stages/20.json") return { data: { id: 20, name: "Intake" } };
+      if (path === "/practice_areas/5.json") return { data: { id: 5, name: "Synthetic practice" } };
+      if (path === "/matter_stages.json") {
+        expect(params).toMatchObject({ "ids[]": "20", practice_area_id: "5", limit: "2" });
+        return { data: [{ id: 20, name: "Intake", practice_area: { id: 5, name: "Synthetic practice" } }] };
+      }
       if (path === "/groups/30.json") return { data: { id: 30, name: "Firm" } };
       if (path === "/contacts/2.json") return { data: { id: 2, name: "Synthetic Related", type: "Person" } };
       if (path === "/custom_fields/8001.json") return { data: {
@@ -198,6 +203,7 @@ describe("controlled matter writes", () => {
     const args = {
       ...CREATE_ARGS,
       responsible_staff_id: 10,
+      practice_area_id: 5,
       matter_stage_id: 20,
       group_id: 30,
       location: "Toronto",
@@ -217,12 +223,36 @@ describe("controlled matter writes", () => {
     }]);
     await handlers.create_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledWith("/matters.json", { data: expect.objectContaining({
-      responsible_staff: { id: 10 }, matter_stage: { id: 20 }, group: { id: 30 },
+      responsible_staff: { id: 10 }, practice_area: { id: 5 }, matter_stage: { id: 20 }, group: { id: 30 },
       location: "Toronto", pending_date: "2026-10-14", require_utbms_codes: true,
       statute_of_limitations: { due_at: "2027-10-14", status: "pending" },
       custom_field_values: [{ custom_field: { id: 8001 }, value: "SYN-MATTER" }],
       relationships: [{ contact: { id: 2 }, description: "Primary contact" }],
     }) });
+  });
+
+  it("validates updated matter stages through the collection and current practice area", async () => {
+    mockClioGet.mockImplementation(async (requestPath: string, params?: Record<string, string>) => {
+      if (requestPath === "/matters/42.json") return { data: MATTER };
+      if (requestPath === "/matter_stages.json") {
+        expect(params).toMatchObject({ "ids[]": "20", practice_area_id: "5" });
+        return { data: [{ id: 20, name: "Intake", practice_area: { id: 5, name: "Synthetic practice" } }] };
+      }
+      throw new Error(`unexpected path ${requestPath}`);
+    });
+    const preview = JSON.parse((await handlers.update_matter({ matter_id: 42, matter_stage_id: 20 })).content[0].text);
+    expect(preview.proposal.changes.matter_stage).toEqual({ id: 20, name: "Intake" });
+
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath === "/matters/42.json") return { data: MATTER };
+      if (requestPath === "/matter_stages.json") {
+        return { data: [{ id: 20, name: "Wrong stage", practice_area: { id: 6, name: "Other" } }] };
+      }
+      throw new Error(`unexpected path ${requestPath}`);
+    });
+    const mismatch = await handlers.update_matter({ matter_id: 42, matter_stage_id: 20 });
+    expect(mismatch.isError).toBe(true);
+    expect(mismatch.content[0].text).toContain("selected practice area");
   });
 
   it("deduplicates repeated relationship contact validation lookups", async () => {

@@ -3,11 +3,31 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { mockClioGet } = vi.hoisted(() => ({ mockClioGet: vi.fn() }));
 vi.mock("../../utils/clioClient.js", () => ({ clioGet: mockClioGet }));
 
-import { resolveCustomFieldValueDetails } from "../customFieldValues.js";
+import {
+  buildNewCustomFieldValues,
+  buildUpdatedCustomFieldValues,
+  resolveCustomFieldValueDetails,
+} from "../customFieldValues.js";
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("custom-field reference validation", () => {
+  it("preserves checkbox booleans in previews and create/update payloads", async () => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 9, name: "Synthetic checkbox", field_type: "checkbox", parent_type: "Contact",
+    } });
+    await expect(resolveCustomFieldValueDetails([
+      { custom_field_id: 9, value: false },
+    ], "Contact")).resolves.toEqual([expect.objectContaining({ value: false })]);
+    expect(buildNewCustomFieldValues([
+      { custom_field_id: 9, value: true },
+    ])).toEqual([{ custom_field: { id: 9 }, value: true }]);
+    expect(buildUpdatedCustomFieldValues(
+      [{ custom_field_id: 9, value: false }],
+      [{ id: "checkbox-9", custom_field: { id: 9 } }],
+    )).toEqual([{ id: "checkbox-9", value: false }]);
+  });
+
   it("resolves picklist, contact, and matter values into signed preview details", async () => {
     mockClioGet.mockImplementation(async (requestPath: string) => {
       if (requestPath === "/custom_fields/1.json") return { data: {

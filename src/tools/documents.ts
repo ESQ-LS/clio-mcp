@@ -28,6 +28,47 @@ const DOCUMENT_DETAIL_FIELDS =
 const PART_SIZE = 10 * 1024 * 1024; // 10 MB — above S3's 5 MB minimum
 const MAX_PARTS_PER_REQUEST = 50;
 const MAX_DOCUMENT_SIZE = 5 * 1024 * 1024 * 1024;
+const MAX_ACTIVE_UPLOAD_SNAPSHOTS = 2;
+const MAX_AGGREGATE_UPLOAD_SNAPSHOT_BYTES = MAX_DOCUMENT_SIZE;
+
+let activeUploadSnapshots = 0;
+let reservedUploadSnapshotBytes = 0;
+
+export function reserveUploadSnapshotCapacity(size: number): () => void {
+  if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_DOCUMENT_SIZE) {
+    throw new Error("Invalid upload snapshot size.");
+  }
+  if (activeUploadSnapshots >= MAX_ACTIVE_UPLOAD_SNAPSHOTS ||
+      reservedUploadSnapshotBytes + size > MAX_AGGREGATE_UPLOAD_SNAPSHOT_BYTES) {
+    throw new Error("Upload snapshot capacity is currently unavailable; retry later.");
+  }
+  activeUploadSnapshots++;
+  reservedUploadSnapshotBytes += size;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeUploadSnapshots--;
+    reservedUploadSnapshotBytes -= size;
+  };
+}
+
+async function removeUploadSnapshot(
+  snapshotDir: string,
+  releaseCapacity: (() => void) | undefined,
+): Promise<void> {
+  try {
+    await fs.rm(snapshotDir, { recursive: true, force: true });
+  } catch (error) {
+    try {
+      await fs.stat(snapshotDir);
+    } catch (statError) {
+      if ((statError as NodeJS.ErrnoException).code === "ENOENT") releaseCapacity?.();
+    }
+    throw error;
+  }
+  releaseCapacity?.();
+}
 const MAX_DUPLICATE_SCAN_PAGES = 5;
 const FINALIZE_RETRY_DELAYS_MS = [250, 500, 1000];
 const PART_UPLOAD_RETRY_DELAYS_MS = [250, 500, 1000];
@@ -141,8 +182,8 @@ async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSna
   if (!isPathWithin(approvedRoot, approvedFile)) {
     throw new Error("file_path is outside the approved upload root.");
   }
-  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), "esq-clio-upload-"));
-  const snapshotPath = path.join(snapshotDir, "payload");
+  let snapshotDir: string | undefined;
+  let releaseCapacity: (() => void) | undefined;
   let sourceHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
     sourceHandle = await fs.open(approvedFile, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -153,10 +194,16 @@ async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSna
       throw new Error("file_path exceeds Clio's 5 GB document limit.");
     }
     if (sourceStats.size === 0) throw new Error("Empty files cannot be uploaded to Clio.");
+    releaseCapacity = reserveUploadSnapshotCapacity(sourceStats.size);
+    const createdSnapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), "esq-clio-upload-"));
+    snapshotDir = createdSnapshotDir;
+    const snapshotPath = path.join(createdSnapshotDir, "payload");
     await pipeline(
       sourceHandle.createReadStream({ autoClose: false, start: 0, end: sourceStats.size - 1 }),
       createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }),
     );
+    await sourceHandle.close();
+    sourceHandle = undefined;
     const snapshotStats = await fs.stat(snapshotPath);
     if (snapshotStats.size !== sourceStats.size) {
       throw new Error("The approved upload file changed while its snapshot was being created.");
@@ -165,14 +212,23 @@ async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSna
       throw new Error("file_path exceeds Clio's 5 GB document limit.");
     }
     const sha256 = await fileSha256(snapshotPath);
+    let cleaned = false;
     return {
       path: snapshotPath,
       size: snapshotStats.size,
       sha256,
-      cleanup: () => fs.rm(snapshotDir, { recursive: true, force: true }),
+      cleanup: async () => {
+        if (cleaned) return;
+        await removeUploadSnapshot(createdSnapshotDir, releaseCapacity);
+        cleaned = true;
+      },
     };
   } catch (error) {
-    await fs.rm(snapshotDir, { recursive: true, force: true });
+    if (snapshotDir) {
+      await removeUploadSnapshot(snapshotDir, releaseCapacity);
+    } else {
+      releaseCapacity?.();
+    }
     throw error;
   } finally {
     await sourceHandle?.close();

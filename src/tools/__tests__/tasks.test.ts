@@ -19,6 +19,7 @@ import { registerTaskTools } from "../tasks.js";
 const TASK = {
   id: 1, etag: "task-v1", name: "Draft contract", description: "Synthetic task",
   priority: "Normal", status: "pending", due_at: "2026-01-15T00:00:00Z",
+  notify_completion: false, assigner: { id: 7, name: "Synthetic Assigner" },
   matter: { id: 99, display_number: "00099-001", description: "Synthetic matter", status: "open" },
 };
 const handlers = new Map<string, (args: any) => Promise<any>>();
@@ -114,10 +115,38 @@ describe("controlled task writes", () => {
 
   it("previews and conditionally completes a task", async () => {
     const preview = JSON.parse((await handlers.get("complete_task")!({ task_id: 1 })).content[0].text);
+    expect(preview.proposal.completion_notification).toEqual({ will_send: false, recipient: null });
     expect(mockClioPatch).not.toHaveBeenCalled();
     const result = await handlers.get("complete_task")!({ task_id: 1, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPatch).toHaveBeenCalledWith("/tasks/1.json", { data: { status: "complete" } }, { "If-Match": "task-v1" });
     expect(JSON.parse(result.content[0].text).task.status).toBe("complete");
+  });
+
+  it("discloses the completion notification and recipient for both completion paths", async () => {
+    mockClioGet.mockImplementation(async (requestPath: string, params?: Record<string, string>) => {
+      if (requestPath === "/tasks/1.json") {
+        expect(params?.fields).toContain("notify_completion");
+        expect(params?.fields).toContain("assigner{id,name}");
+        return { data: { ...TASK, notify_completion: true } };
+      }
+      throw new Error(`unexpected path ${requestPath}`);
+    });
+    const expected = {
+      will_send: true,
+      recipient: { id: 7, name: "Synthetic Assigner" },
+    };
+    const completePreview = JSON.parse((await handlers.get("complete_task")!({ task_id: 1 })).content[0].text);
+    expect(completePreview.proposal.completion_notification).toEqual(expected);
+    const updatePreview = JSON.parse((await handlers.get("update_task")!({ task_id: 1, status: "Complete" })).content[0].text);
+    expect(updatePreview.proposal.completion_notification).toEqual(expected);
+  });
+
+  it("refuses completion when an enabled notification recipient cannot be validated", async () => {
+    mockClioGet.mockResolvedValue({ data: { ...TASK, notify_completion: true, assigner: null } });
+    const result = await handlers.get("complete_task")!({ task_id: 1 });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("notification recipient could not be validated");
+    expect(mockClioPatch).not.toHaveBeenCalled();
   });
 
   it("reports failed final audits after successful create, update, and complete writes", async () => {

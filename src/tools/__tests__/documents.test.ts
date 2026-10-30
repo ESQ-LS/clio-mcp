@@ -17,7 +17,7 @@ vi.mock("../../auth/tokenStorage.js", () => ({
   loadTokens: vi.fn(async () => ({ clio_user_id: "100", expires_at: Date.now() + 60000 })),
 }));
 
-import { readExactBytes, registerDocumentTools } from "../documents.js";
+import { readExactBytes, registerDocumentTools, reserveUploadSnapshotCapacity } from "../documents.js";
 import { ClioApiError } from "../../utils/clioClient.js";
 
 let tempDir = "";
@@ -49,6 +49,26 @@ beforeEach(async () => {
 afterEach(async () => { await fs.rm(tempDir, { recursive: true, force: true }); });
 
 describe("controlled document upload", () => {
+  it("bounds aggregate snapshot bytes and concurrent reservations", () => {
+    const releaseLarge = reserveUploadSnapshotCapacity(3 * 1024 * 1024 * 1024);
+    try {
+      expect(() => reserveUploadSnapshotCapacity(3 * 1024 * 1024 * 1024))
+        .toThrow("snapshot capacity is currently unavailable");
+    } finally {
+      releaseLarge();
+    }
+
+    const releaseFirst = reserveUploadSnapshotCapacity(1);
+    const releaseSecond = reserveUploadSnapshotCapacity(1);
+    try {
+      expect(() => reserveUploadSnapshotCapacity(1))
+        .toThrow("snapshot capacity is currently unavailable");
+    } finally {
+      releaseFirst();
+      releaseSecond();
+    }
+  });
+
   it("fills buffers across short reads and fails on premature EOF", async () => {
     const source = Buffer.from("synthetic bytes");
     const shortReader = {

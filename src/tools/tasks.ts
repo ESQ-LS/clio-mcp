@@ -12,7 +12,7 @@ import {
   CLIO_UPDATE_TOOL_ANNOTATIONS,
 } from "./annotations.js";
 
-const TASK_FIELDS = "id,etag,name,description,priority,due_at,status,completed_at,assignee{id,name},assignees{id,name},matter{id,display_number,description,status},reminders{id,notification_method}";
+const TASK_FIELDS = "id,etag,name,description,priority,due_at,status,completed_at,notify_completion,assigner{id,name},assignee{id,name},assignees{id,name},matter{id,display_number,description,status},reminders{id,notification_method}";
 
 const STATUS_MAP: Record<string, string> = { Pending: "pending", Complete: "complete", "In Progress": "in_progress", "In Review": "in_review", "Draft": "draft" };
 const taskDateSchema = z.string().date();
@@ -27,6 +27,18 @@ function buildTaskData(input: Record<string, unknown>): Record<string, unknown> 
   if (input.matter_id !== undefined) data.matter = { id: input.matter_id };
   if (input.assignee_id !== undefined) data.assignee = { id: input.assignee_id, type: "User" };
   return data;
+}
+
+function completionNotification(current: any, requestedStatus: unknown) {
+  if (requestedStatus !== "complete") return undefined;
+  const willSend = current.status !== "complete" && current.notify_completion === true;
+  if (willSend && (!Number.isInteger(current.assigner?.id) || typeof current.assigner?.name !== "string")) {
+    throw new Error("Task completion notification recipient could not be validated.");
+  }
+  return {
+    will_send: willSend,
+    recipient: willSend ? { id: current.assigner.id, name: current.assigner.name } : null,
+  };
 }
 
 export function registerTaskTools(server: McpServer): void {
@@ -217,6 +229,7 @@ export function registerTaskTools(server: McpServer): void {
         if (typeof current.etag !== "string" || !current.etag.trim()) throw new Error("Clio did not return a task ETag; no update can be performed safely.");
         const assignee = assignee_id === undefined ? null : (await clioGet(`/users/${assignee_id}.json`, { fields: "id,name,enabled" }))?.data;
         if (assignee_id !== undefined && (assignee?.id !== assignee_id || assignee.enabled === false)) throw new Error("Assignee validation failed.");
+        const notification = completionNotification(current, taskData.status);
         const proposal = {
           record_id: task_id, current_etag: current.etag,
           current: {
@@ -226,6 +239,7 @@ export function registerTaskTools(server: McpServer): void {
           },
           changes: taskData,
           assignee: assignee ? { id: assignee.id, name: assignee.name } : null,
+          ...(notification && { completion_notification: notification }),
           ...(assignee_id !== undefined && (current.assignees?.length ?? 0) > 1 && {
             assignee_replacement: {
               warning: "Replacing the singular assignee will remove the other firm-user assignees.",
@@ -316,10 +330,12 @@ export function registerTaskTools(server: McpServer): void {
         const current = (await clioGet(`/tasks/${task_id}.json`, { fields: TASK_FIELDS }))?.data;
         if (current?.id !== task_id) throw new Error("Task validation failed.");
         if (typeof current.etag !== "string" || !current.etag.trim()) throw new Error("Clio did not return a task ETag; no update can be performed safely.");
+        const notification = completionNotification(current, STATUS_MAP["Complete"]);
         const proposal = {
           record_id: task_id, current_etag: current.etag,
           current: { name: current.name, status: current.status, due_at: current.due_at, matter: current.matter },
           changes: { status: STATUS_MAP["Complete"] },
+          completion_notification: notification,
         };
         if (!confirm_write) {
           const auditOk = await appendAuditLog({

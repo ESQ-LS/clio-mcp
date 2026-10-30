@@ -145,9 +145,22 @@ async function resolveMatterReferences(input: Record<string, unknown>, currentMa
     }
   }
   if (input.matter_stage_id !== undefined) {
-    const response = await clioGet(`/matter_stages/${input.matter_stage_id}.json`, { fields: "id,name" });
-    if (response?.data?.id !== input.matter_stage_id) throw new Error("Matter-stage validation failed.");
-    refs.matter_stage = { id: response.data.id, name: response.data.name };
+    const practiceAreaId = input.practice_area_id ?? currentMatter?.practice_area?.id;
+    if (!Number.isInteger(practiceAreaId) || Number(practiceAreaId) <= 0) {
+      throw new Error("Matter-stage validation requires a selected or current practice area.");
+    }
+    const response = await clioGet("/matter_stages.json", {
+      "ids[]": String(input.matter_stage_id),
+      practice_area_id: String(practiceAreaId),
+      fields: "id,name,practice_area{id,name}",
+      limit: "2",
+    });
+    const stages = Array.isArray(response?.data) ? response.data : [];
+    const stage = stages.find((candidate: any) => candidate?.id === input.matter_stage_id);
+    if (!stage || stage.practice_area?.id !== practiceAreaId) {
+      throw new Error("Matter-stage validation failed for the selected practice area.");
+    }
+    refs.matter_stage = { id: stage.id, name: stage.name };
   }
   if (input.group_id !== undefined) {
     const response = await clioGet(`/groups/${input.group_id}.json`, { fields: "id,name" });

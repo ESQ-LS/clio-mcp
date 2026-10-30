@@ -17,6 +17,10 @@ type CustomFieldDefinition = {
   picklist_options?: Array<{ id: number; option: string }>;
 };
 
+function apiCustomFieldValue(value: unknown): unknown {
+  return typeof value === "boolean" ? value : String(value);
+}
+
 function isCalendarDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -151,7 +155,7 @@ export async function resolveCustomFieldValueDetails(
         field_type: definition.field_type,
         parent_type: definition.parent_type,
       },
-      value: String(value),
+      value: apiCustomFieldValue(value),
     };
 
     if (definition.field_type === "picklist") {
@@ -198,7 +202,7 @@ export async function resolveCustomFieldValueDetails(
 export function buildNewCustomFieldValues(value: unknown): Array<Record<string, unknown>> {
   return normalizedRequests(value).map(({ custom_field_id, value: fieldValue }) => ({
     custom_field: { id: custom_field_id },
-    value: String(fieldValue),
+    value: apiCustomFieldValue(fieldValue),
   }));
 }
 
@@ -229,7 +233,7 @@ export function buildUpdatedCustomFieldValues(
   return normalizedRequests(requested).map(({ custom_field_id, value }) => {
     const existingId = existingByDefinition.get(custom_field_id);
     return existingId
-      ? { id: existingId, value: String(value) }
-      : { custom_field: { id: custom_field_id }, value: String(value) };
+      ? { id: existingId, value: apiCustomFieldValue(value) }
+      : { custom_field: { id: custom_field_id }, value: apiCustomFieldValue(value) };
   });
 }
