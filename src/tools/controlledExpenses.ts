@@ -142,8 +142,8 @@ function expenseSummary(entry: any) {
 }
 
 async function validateExpenseReferences(candidate: ExpenseCandidate): Promise<{ matter: any; category: any }> {
-  if (candidate.cost_type === "internal_non_billable_cost" && candidate.billing_status === "billable") {
-    throw new Error("Internal firm costs cannot be marked billable by this controlled tool.");
+  if (candidate.cost_type === "internal_non_billable_cost" && candidate.billing_status !== "non_billable") {
+    throw new Error("Internal firm costs must use non_billable status so they cannot appear on a client bill.");
   }
 
   const matterResponse = await clioGet(`/matters/${candidate.matter_id}.json`, {

@@ -49,11 +49,12 @@ describe("controlled task writes", () => {
     const args = { matter_id: 99, name: "Draft contract", description: "Synthetic task", priority: "Normal", due_date: "2026-01-15", assignee_id: 42 };
     const preview = JSON.parse((await handlers.get("create_task")!(args)).content[0].text);
     expect(preview.mode).toBe("dry_run");
+    expect(preview.proposal.task.permission).toBe("public");
     expect(mockClioPost).not.toHaveBeenCalled();
     await handlers.get("create_task")!({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledWith("/tasks.json", { data: {
       name: "Draft contract", description: "Synthetic task", priority: "Normal", due_at: "2026-01-15T00:00:00Z",
-      matter: { id: 99 }, assignee: { id: 42, type: "User" },
+      matter: { id: 99 }, assignee: { id: 42, type: "User" }, permission: "public",
     } });
     const audit = JSON.stringify(mockAppendAuditLog.mock.calls);
     expect(audit).not.toContain(args.name);

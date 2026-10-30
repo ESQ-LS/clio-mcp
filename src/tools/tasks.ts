@@ -126,7 +126,10 @@ export function registerTaskTools(server: McpServer): void {
     async ({ matter_id, name, description, priority, due_date, assignee_id, confirm_write, preview_token }) => {
       let writeAttempted = false;
       try {
-        const taskData = buildTaskData({ matter_id, name, description, priority, due_date, assignee_id });
+        const taskData = {
+          ...buildTaskData({ matter_id, name, description, priority, due_date, assignee_id }),
+          permission: "public",
+        };
         const matter = (await clioGet(`/matters/${matter_id}.json`, { fields: "id,display_number,description,status" }))?.data;
         if (matter?.id !== matter_id) throw new Error("Matter validation failed.");
         const assignee = assignee_id === undefined ? null : (await clioGet(`/users/${assignee_id}.json`, { fields: "id,name,enabled" }))?.data;

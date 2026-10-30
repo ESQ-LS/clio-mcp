@@ -427,8 +427,11 @@ The ESQ production fork is read-only unless a write tool is explicitly named in
 `ESQ_WRITE_TOOLS`. Enable only the named routine tools required for the deployed
 workflow. Each controlled tool is dry-run by default and requires a
 second, unchanged call with `confirm_write: true` and the short-lived,
-single-use `preview_token` returned by the dry run. Updates require the current
-Activity ID and ETag, use `If-Match`, and reject billed or invoiced entries.
+single-use `preview_token` returned by the dry run. Controlled time- and
+expense-entry updates require the current Activity ID and ETag, use `If-Match`,
+and reject billed or invoiced entries. Contact, matter, and task updates accept
+their resource ID, read the current ETag before preview, and use that ETag with
+`If-Match` on confirmation.
 Deletion, trust transfers, permission changes, and bulk mutation are not implemented.
 
 Document uploads additionally require `ESQ_CLIO_UPLOAD_ROOT` to be an absolute,

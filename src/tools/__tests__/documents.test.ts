@@ -112,6 +112,49 @@ describe("controlled document upload", () => {
     expect(mockClioPost).not.toHaveBeenCalled();
   });
 
+  it("rejects invalid explicit MIME types before preview authorization", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "synthetic document\n");
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const result = await handlers.upload_document({
+      file_path: filePath,
+      matter_id: 99,
+      content_type: "not-a-mime",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("standard MIME type");
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
+  it("reports local checksum failures as no Clio write performed", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "synthetic document\n");
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const args = { file_path: filePath, matter_id: 99 };
+    const preview = JSON.parse((await handlers.upload_document(args)).content[0].text);
+    const originalOpen = fs.open.bind(fs);
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (candidate, ...openArgs) => {
+      if (path.basename(String(candidate)) === "payload") {
+        throw new Error("synthetic checksum read failure");
+      }
+      return (originalOpen as any)(candidate, ...openArgs);
+    });
+    let result: any;
+    try {
+      result = await handlers.upload_document({
+        ...args, confirm_write: true, preview_token: preview.preview_token,
+      });
+    } finally {
+      openSpy.mockRestore();
+    }
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ write_performed: false });
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
   it("opens the approved source with no-follow semantics", async () => {
     const filePath = path.join(tempDir, "synthetic.txt");
     await fs.writeFile(filePath, "synthetic document\n");

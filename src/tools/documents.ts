@@ -92,6 +92,28 @@ const MIME_MAP: Record<string, string> = {
   jpeg: "image/jpeg",
 };
 
+const DOCUMENT_MIME_TOP_LEVELS = new Set([
+  "application", "audio", "font", "image", "message", "model", "multipart", "text", "video",
+]);
+const DOCUMENT_MIME_SUBTYPE = /^[a-z0-9][a-z0-9!#$%&'*+.^_`|~-]*$/i;
+
+function isValidDocumentContentType(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (DOCUMENT_MIME_TOP_LEVELS.has(normalized)) return true;
+  const parts = normalized.split("/");
+  return parts.length === 2 &&
+    DOCUMENT_MIME_TOP_LEVELS.has(parts[0]) &&
+    DOCUMENT_MIME_SUBTYPE.test(parts[1]);
+}
+
+function normalizeDocumentContentType(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!isValidDocumentContentType(normalized)) {
+    throw new Error("content_type must be a standard MIME type or a documented Clio top-level fallback type.");
+  }
+  return normalized;
+}
+
 function guessMime(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   return MIME_MAP[ext] ?? "application/octet-stream";
@@ -472,7 +494,10 @@ export function registerDocumentTools(server: McpServer): void {
         matter_id: z.number().int().positive().describe("Clio matter ID to attach the document to"),
         folder_id: z.number().int().positive().optional().describe("Optional Clio folder ID that must belong to matter_id"),
         name: z.string().optional().describe("Document name in Clio; defaults to the file's basename"),
-        content_type: z.string().optional().describe("MIME type; auto-detected from extension if omitted"),
+        content_type: z.string().trim().refine(
+          isValidDocumentContentType,
+          "content_type must be a standard MIME type or a documented Clio top-level fallback type",
+        ).optional().describe("MIME type; auto-detected from extension if omitted"),
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
       },
@@ -482,6 +507,9 @@ export function registerDocumentTools(server: McpServer): void {
       let writeAttempted = false;
       let snapshot: UploadSnapshot | undefined;
       try {
+        const explicitMime = content_type === undefined
+          ? undefined
+          : normalizeDocumentContentType(content_type);
         snapshot = await createApprovedUploadSnapshot(file_path);
         const totalSize = snapshot.size;
         const originalExt = path.extname(file_path);
@@ -491,7 +519,7 @@ export function registerDocumentTools(server: McpServer): void {
         if (!docName.trim() || docName.length > 255 || /[\0\r\n/\\]/.test(docName)) {
           throw new Error("Document name must be 1-255 characters and cannot contain path separators or control characters.");
         }
-        const mime = content_type ?? guessMime(docName);
+        const mime = explicitMime ?? normalizeDocumentContentType(guessMime(docName));
         const sha256 = snapshot.sha256;
         const matterResponse = await clioGet(`/matters/${matter_id}.json`, {
           fields: "id,display_number,description,status,redacted",
@@ -560,8 +588,6 @@ export function registerDocumentTools(server: McpServer): void {
           args: { confirm_write: true, matter_id, folder_id, size: totalSize },
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio upload was attempted.");
-        writeAttempted = true;
-
         type PartDescriptor = { part_number: number; content_length: number; content_md5: string; offset: number };
         const allParts: PartDescriptor[] = [];
         let offset = 0;
@@ -575,6 +601,7 @@ export function registerDocumentTools(server: McpServer): void {
         }
 
         const firstBatch = allParts.slice(0, MAX_PARTS_PER_REQUEST);
+        writeAttempted = true;
         const createResp = await clioPost(
           "/documents.json?fields=id,latest_document_version{uuid,put_headers,multiparts}",
           {

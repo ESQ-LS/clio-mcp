@@ -188,6 +188,17 @@ describe("create_expense_entry", () => {
     );
   });
 
+  it("rejects no-charge internal costs so they cannot appear on a client bill", async () => {
+    const result = await buildHandlers().create_expense_entry({
+      ...CREATE_ARGS,
+      billing_status: "no_charge",
+      cost_type: "internal_non_billable_cost",
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toContain("must use non_billable status");
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
   it("resolves and signs explicit tax configurations before writing them", async () => {
     mockClioGet.mockImplementation(async (path: string) => {
       if (path === "/matters/101.json") return { data: MATTER };
