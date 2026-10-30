@@ -33,6 +33,7 @@ const MATTER = {
   display_number: "SYNTH-0001",
   status: "Open",
   billable: true,
+  billing_method: "hourly",
   require_utbms_codes: false,
   redacted: false,
 };
@@ -84,9 +85,9 @@ function buildHandlers(): Record<string, Handler> {
   return handlers;
 }
 
-function installReads(entry = CURRENT): void {
+function installReads(entry = CURRENT, matter = MATTER): void {
   mockClioGet.mockImplementation(async (path: string) => {
-    if (path === "/matters/101.json") return { data: MATTER };
+    if (path === "/matters/101.json") return { data: matter };
     if (path === "/expense_categories/77.json") return { data: CATEGORY };
     if (path === "/activities/501.json") return { data: entry };
     if (path === "/activities.json") return { data: [] };
@@ -235,6 +236,20 @@ describe("create_expense_entry", () => {
     expect(mockClioPost).not.toHaveBeenCalled();
   });
 
+  it.each(["flat_rate", "contingency"])("allows billable expenses for UTBMS-exempt %s matters", async (billingMethod) => {
+    installReads(CURRENT, { ...MATTER, require_utbms_codes: true, billing_method: billingMethod });
+    const result = await buildHandlers().create_expense_entry(CREATE_ARGS);
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ mode: "dry_run" });
+  });
+
+  it("still rejects billable expenses when an hourly matter requires UTBMS codes", async () => {
+    installReads(CURRENT, { ...MATTER, require_utbms_codes: true, billing_method: "hourly" });
+    const result = await buildHandlers().create_expense_entry(CREATE_ARGS);
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toMatch(/requires a UTBMS expense code/);
+  });
+
   it("rejects a duplicate at preview", async () => {
     mockClioGet.mockImplementation(async (path: string) => {
       if (path === "/matters/101.json") return { data: MATTER };
@@ -334,6 +349,12 @@ describe("update_expense_entry", () => {
       { data: { price: 150 } },
       { "If-Match": '"expense-etag"' },
     );
+  });
+
+  it("binds the existing quantity and recalculated total into an amount-change preview", async () => {
+    installReads({ ...CURRENT, quantity: 2, total: 250 });
+    const preview = JSON.parse((await buildHandlers().update_expense_entry(UPDATE_ARGS)).content[0].text);
+    expect(preview.proposal).toMatchObject({ amount: 150, quantity: 2, total: 300 });
   });
 
   it("rejects stale ETags, billed entries, and cross-matter allocation", async () => {

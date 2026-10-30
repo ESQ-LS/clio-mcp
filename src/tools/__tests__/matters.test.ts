@@ -296,6 +296,15 @@ describe("controlled matter writes", () => {
     expect(preview.proposal.changes.close_date).toBe("2026-10-01");
   });
 
+  it("does not overwrite a lifecycle date when Clio returns title-case status", async () => {
+    mockClioGet.mockResolvedValue({ data: { ...MATTER, status: "Open", open_date: "2025-01-15" } });
+    const preview = JSON.parse((await handlers.update_matter({
+      matter_id: 42, status: "open",
+    })).content[0].text);
+    expect(preview.proposal.changes).toEqual({ status: "open" });
+    expect(preview.proposal.changes).not.toHaveProperty("open_date");
+  });
+
   it("requires and forwards the matter-number reset control for display-number updates", async () => {
     mockClioGet.mockResolvedValue({ data: MATTER });
     const rejected = await handlers.update_matter({ matter_id: 42, display_number: "SYN-0042" });

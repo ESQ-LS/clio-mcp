@@ -126,7 +126,9 @@ async function validateExpenseReferences(candidate: ExpenseCandidate): Promise<{
   if (candidate.billing_status === "billable" && matter.billable === false) {
     throw new Error("A billable expense cannot be written to a non-billable matter.");
   }
-  if (candidate.billing_status === "billable" && matter.require_utbms_codes === true) {
+  const billingMethod = String(matter.billing_method ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const utbmsExemptBillingMethod = billingMethod === "flat_rate" || billingMethod === "contingency";
+  if (candidate.billing_status === "billable" && matter.require_utbms_codes === true && !utbmsExemptBillingMethod) {
     throw new Error("This matter requires a UTBMS expense code, which this controlled tool does not accept.");
   }
 
@@ -506,6 +508,10 @@ export function registerControlledExpenseTools(server: McpServer): void {
           tax_setting: tax_setting ?? current.tax_setting ?? "no_tax",
           cost_type,
         };
+        const quantity = Number(current.quantity);
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          throw new Error("Clio returned an invalid expense quantity; no update can be previewed safely.");
+        }
         const refs = await validateExpenseReferences(candidate);
         const duplicate = await findDuplicateExpense(candidate, activity_id);
         if (duplicate) {
@@ -518,7 +524,8 @@ export function registerControlledExpenseTools(server: McpServer): void {
           allocation_matter_id,
           date: candidate.date,
           amount: candidate.amount,
-          quantity: 1,
+          quantity,
+          total: candidate.amount * quantity,
           expense_category: {
             id: refs.category.id,
             name: refs.category.name,

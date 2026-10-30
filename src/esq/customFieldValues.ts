@@ -50,8 +50,11 @@ function validateScalarValue(value: unknown, fieldType: string): void {
       return;
     }
     case "currency": {
-      const parsed = typeof value === "number" ? value : stringValue !== null && /^-?\d+(?:\.\d+)?$/.test(stringValue) ? Number(stringValue) : NaN;
-      if (!Number.isFinite(parsed)) throw new Error("currency custom field values must be finite monetary amounts.");
+      const serialized = typeof value === "number" ? String(value) : stringValue;
+      const parsed = serialized !== null && /^-?\d+(?:\.\d{1,2})?$/.test(serialized) ? Number(serialized) : NaN;
+      if (!Number.isFinite(parsed)) {
+        throw new Error("currency custom field values must be finite monetary amounts with at most two decimal places.");
+      }
       return;
     }
     case "date":

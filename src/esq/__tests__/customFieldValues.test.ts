@@ -118,6 +118,15 @@ describe("custom-field reference validation", () => {
     }
   });
 
+  it.each([1.234, "1.234"])("rejects currency precision beyond two decimal places: %s", async (value) => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 201, name: "Synthetic amount", field_type: "currency", parent_type: "Contact",
+    } });
+    await expect(resolveCustomFieldValueDetails([
+      { custom_field_id: 201, value },
+    ], "Contact")).rejects.toThrow("at most two decimal places");
+  });
+
   it("rejects unsupported custom-field types before preview authorization", async () => {
     mockClioGet.mockResolvedValue({ data: {
       id: 200, name: "Synthetic unknown", field_type: "future_type", parent_type: "Contact",
