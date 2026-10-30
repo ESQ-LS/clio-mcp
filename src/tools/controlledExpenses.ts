@@ -616,7 +616,7 @@ export function registerControlledExpenseTools(server: McpServer): void {
           data.note = composeExpenseNote(candidate.description, candidate.source_reference);
         }
         if (billing_status !== undefined) Object.assign(data, billingFlags(billing_status));
-        if (tax_setting !== undefined) data.tax_setting = tax_setting;
+        if (tax_setting !== undefined && tax_settings === undefined) data.tax_setting = tax_setting;
         if (tax_settings !== undefined) data.tax_settings = tax_settings;
         writeAttempted = true;
         const response = await clioPatch(

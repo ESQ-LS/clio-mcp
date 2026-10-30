@@ -100,7 +100,7 @@ const contactFieldsSchema = {
   email_addresses: z.array(emailAddressSchema).max(20).optional(),
   phone_numbers: z.array(phoneNumberSchema).max(20).optional(),
   addresses: z.array(addressSchema).max(20).optional(),
-  web_sites: z.array(webSiteSchema).max(20).optional(),
+  web_sites: z.array(webSiteSchema).max(100).optional(),
 };
 const { clio_connect_email: _clioConnectEmail, ...routineContactFieldsSchema } = contactFieldsSchema;
 
@@ -319,6 +319,7 @@ function assertAssociationLimit(currentEntries: unknown, changes: unknown, kind:
   if (!Array.isArray(currentEntries) || !Array.isArray(changes)) {
     throw new Error(`Malformed contact ${kind} response.`);
   }
+  if (kind === "website") return;
   const additions = changes.filter((entry) => entry?.id === undefined).length;
   if (currentEntries.length + additions > 20) {
     throw new Error(`Contact ${kind} entries cannot exceed Clio's 20-entry limit.`);

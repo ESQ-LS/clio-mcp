@@ -429,6 +429,36 @@ describe("update_expense_entry", () => {
     expect(preview.proposal).toMatchObject({ tax_setting: "no_tax", tax_settings: [] });
   });
 
+  it("omits legacy no_tax from the confirmed payload when explicit tax settings are supplied", async () => {
+    mockClioGet.mockImplementation(async (path: string) => {
+      if (path === "/activities/501.json") return { data: CURRENT };
+      if (path === "/matters/101.json") return { data: MATTER };
+      if (path === "/expense_categories/77.json") return { data: CATEGORY };
+      if (path === "/activities.json") return { data: [] };
+      if (path === "/tax_rate_configurations/901.json") return { data: {
+        id: 901, etag: "tax-v1", name: "Synthetic HST", rate: 0.13,
+        rate_as_percentage: 13, active: true,
+      } };
+      throw new Error(`Unexpected synthetic path: ${path}`);
+    });
+    const handlers = buildHandlers();
+    const args = {
+      ...UPDATE_ARGS,
+      tax_setting: "no_tax",
+      tax_settings: [{ tax_rate_configuration_id: 901, order: 1, rule: "Pre" }],
+    };
+    const preview = JSON.parse((await handlers.update_expense_entry(args)).content[0].text);
+    expect(preview.proposal).toMatchObject({ tax_setting: null });
+    await handlers.update_expense_entry({
+      ...args, confirm_write: true, preview_token: preview.preview_token,
+    });
+    expect(mockClioPatch).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/activities\/501\.json\?fields=/),
+      { data: { price: 150, tax_settings: args.tax_settings } },
+      { "If-Match": '"expense-etag"' },
+    );
+  });
+
   it("rejects stale ETags, billed entries, and cross-matter allocation", async () => {
     installReads({ ...CURRENT, etag: '"new-etag"' });
     const stale = await buildHandlers().update_expense_entry(UPDATE_ARGS);

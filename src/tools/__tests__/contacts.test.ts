@@ -419,6 +419,36 @@ describe("controlled contact writes", () => {
     expect(mockClioPatch).not.toHaveBeenCalled();
   });
 
+  it("allows website mutations beyond Clio's unrelated 20-entry association cap", async () => {
+    const websites = Array.from({ length: 21 }, (_, index) => ({
+      id: index + 1,
+      name: "Work",
+      address: `https://synthetic-${index + 1}.example.test`,
+    }));
+    mockClioGet.mockResolvedValueOnce({ data: [] });
+    const handlers = getHandlers();
+    const create = await handlers.create_contact({
+      type: "Company",
+      name: "Synthetic Website Company",
+      web_sites: websites.map(({ id: _id, ...website }) => website),
+    });
+    expect(create.isError).not.toBe(true);
+
+    mockClioGet.mockResolvedValueOnce({ data: {
+      id: 42, etag: "contact-v1", name: "Synthetic", type: "Company", web_sites: websites,
+    } });
+    const update = await handlers.update_contact({
+      contact_id: 42,
+      web_sites: [{ id: 21, address: "https://updated.example.test" }],
+    });
+    expect(update.isError).not.toBe(true);
+    expect(JSON.parse(update.content[0].text).proposal.changes.web_sites).toEqual([{
+      id: 21, name: "Work", address: "https://updated.example.test",
+    }]);
+    expect(mockClioPost).not.toHaveBeenCalled();
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicate IDs in every plural contact association", async () => {
     mockClioGet.mockResolvedValue({ data: {
       id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",

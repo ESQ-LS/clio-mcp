@@ -64,14 +64,24 @@ describe("controlled task writes", () => {
   });
 
   it("previews and conditionally updates a task", async () => {
-    const args = { task_id: 1, status: "In Progress", due_date: "2026-01-16" };
+    const args = { task_id: 1, status: "Complete", due_date: "2026-01-16" };
     const preview = JSON.parse((await handlers.get("update_task")!(args)).content[0].text);
     expect(mockClioPatch).not.toHaveBeenCalled();
     await handlers.get("update_task")!({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPatch).toHaveBeenCalledWith("/tasks/1.json", { data: {
-      due_at: "2026-01-16T00:00:00Z", status: "in_progress",
+      due_at: "2026-01-16T00:00:00Z", status: "complete",
     } }, { "If-Match": "task-v1" });
   });
+
+  it.each(["In Progress", "In Review", "Draft"])(
+    "rejects the advanced %s status before issuing a preview",
+    async (status) => {
+      const result = await handlers.get("update_task")!({ task_id: 1, status });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("account entitlement cannot be verified");
+      expect(mockClioPatch).not.toHaveBeenCalled();
+    },
+  );
 
   it("discloses every firm user removed by singular assignee replacement", async () => {
     mockClioGet.mockImplementation(async (path: string, params?: Record<string, string>) => {

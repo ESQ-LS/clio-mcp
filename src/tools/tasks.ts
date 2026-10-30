@@ -15,6 +15,7 @@ import {
 const TASK_FIELDS = "id,etag,name,description,priority,due_at,status,completed_at,notify_completion,assigner{id,name},assignee{id,name},assignees{id,name},matter{id,display_number,description,status},reminders{id,notification_method}";
 
 const STATUS_MAP: Record<string, string> = { Pending: "pending", Complete: "complete", "In Progress": "in_progress", "In Review": "in_review", "Draft": "draft" };
+const CONTROLLED_UPDATE_STATUSES = ["Pending", "Complete"] as const;
 const taskDateSchema = z.string().date();
 
 function buildTaskData(input: Record<string, unknown>): Record<string, unknown> {
@@ -210,7 +211,7 @@ export function registerTaskTools(server: McpServer): void {
         description: z.string().optional().describe("New task description"),
         priority: z.enum(["High", "Normal", "Low"]).optional().describe("New priority"),
         due_date: taskDateSchema.optional().describe("ISO date (YYYY-MM-DD) for due date"),
-        status: z.enum(["Pending", "Complete", "In Progress", "In Review", "Draft"]).optional().describe("New task status"),
+        status: z.enum(CONTROLLED_UPDATE_STATUSES).optional().describe("New task status; advanced statuses are unavailable because account entitlement cannot be verified before preview"),
         assignee_id: z.number().int().positive().optional().describe("Clio user ID to reassign the task to"),
         confirm_write: z.boolean().default(false),
         preview_token: z.string().optional(),
@@ -223,6 +224,9 @@ export function registerTaskTools(server: McpServer): void {
       }
       let writeAttempted = false;
       try {
+        if (status !== undefined && !CONTROLLED_UPDATE_STATUSES.includes(status as "Pending" | "Complete")) {
+          throw new Error("Advanced task statuses cannot be updated because account entitlement cannot be verified before preview; use Pending or Complete.");
+        }
         const taskData = buildTaskData({ name, description, priority, due_date, status, assignee_id });
         const current = (await clioGet(`/tasks/${task_id}.json`, { fields: TASK_FIELDS }))?.data;
         if (current?.id !== task_id) throw new Error("Task validation failed.");
