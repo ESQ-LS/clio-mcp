@@ -31,9 +31,13 @@ vi.mock("../../auth/tokenStorage.js", () => ({
 import { firmCalendarDate, registerMatterTools } from "../matters.js";
 
 const handlers: Record<string, Function> = {};
+const toolConfigs: Record<string, any> = {};
 beforeAll(() => {
   registerMatterTools({
-    registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; },
+    registerTool: (name: string, config: unknown, handler: Function) => {
+      handlers[name] = handler;
+      toolConfigs[name] = config;
+    },
   } as any);
 });
 
@@ -189,7 +193,6 @@ describe("controlled matter writes", () => {
       if (path === "/contacts/1.json") return CLIENT;
       if (path === "/users/10.json") return { data: { id: 10, name: "Synthetic Staff", enabled: true } };
       if (path === "/practice_areas/5.json") return { data: { id: 5, name: "Synthetic practice" } };
-      if (path === "/groups/30.json") return { data: { id: 30, name: "Firm" } };
       if (path === "/contacts/2.json") return { data: { id: 2, name: "Synthetic Related", type: "Person" } };
       if (path === "/custom_fields/8001.json") return { data: {
         id: 8001, name: "Internal code", field_type: "text_line", parent_type: "Matter",
@@ -200,7 +203,6 @@ describe("controlled matter writes", () => {
       ...CREATE_ARGS,
       responsible_staff_id: 10,
       practice_area_id: 5,
-      group_id: 30,
       location: "Toronto",
       require_utbms_codes: true,
       pending_date: "2026-10-14",
@@ -218,12 +220,26 @@ describe("controlled matter writes", () => {
     }]);
     await handlers.create_matter({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(mockClioPost).toHaveBeenCalledWith("/matters.json", { data: expect.objectContaining({
-      responsible_staff: { id: 10 }, practice_area: { id: 5 }, group: { id: 30 },
+      responsible_staff: { id: 10 }, practice_area: { id: 5 },
       location: "Toronto", pending_date: "2026-10-14", require_utbms_codes: true,
       statute_of_limitations: { due_at: "2027-10-14", status: "pending" },
       custom_field_values: [{ custom_field: { id: 8001 }, value: "SYN-MATTER" }],
       relationships: [{ contact: { id: 2 }, description: "Primary contact" }],
     }) });
+  });
+
+  it("rejects matter permission-group changes from routine create and update writes", async () => {
+    expect(toolConfigs.create_matter.inputSchema).not.toHaveProperty("group_id");
+    expect(toolConfigs.update_matter.inputSchema).not.toHaveProperty("group_id");
+    const created = await handlers.create_matter({ ...CREATE_ARGS, group_id: 30 });
+    const updated = await handlers.update_matter({ matter_id: 42, group_id: 30 });
+    for (const result of [created, updated]) {
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("changes matter permissions");
+    }
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPost).not.toHaveBeenCalled();
+    expect(mockClioPatch).not.toHaveBeenCalled();
   });
 
   it("rejects matter-stage mutations before previewing or reading Clio", async () => {

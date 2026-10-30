@@ -236,7 +236,7 @@ describe("create_expense_entry", () => {
     expect(mockClioPost).not.toHaveBeenCalled();
   });
 
-  it.each(["flat_rate", "contingency"])("allows billable expenses for UTBMS-exempt %s matters", async (billingMethod) => {
+  it.each(["flat", "flat_rate", "contingency"])("allows billable expenses for UTBMS-exempt %s matters", async (billingMethod) => {
     installReads(CURRENT, { ...MATTER, require_utbms_codes: true, billing_method: billingMethod });
     const result = await buildHandlers().create_expense_entry(CREATE_ARGS);
     expect(result.isError).not.toBe(true);

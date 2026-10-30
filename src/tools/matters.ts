@@ -53,7 +53,6 @@ const matterFieldsSchema = {
   originating_attorney_id: z.number().int().positive().optional().describe("Clio user ID of the originating attorney"),
   responsible_staff_id: z.number().int().positive().optional().describe("Clio user ID of responsible staff"),
   matter_stage_id: z.number().int().positive().optional().describe("Unsupported by controlled writes because stage changes can trigger undisclosed client notifications and automated workflows"),
-  group_id: z.number().int().positive().optional().describe("Clio group ID"),
   location: z.string().trim().max(500).optional().describe("Matter location"),
   client_reference: z.string().trim().max(255).optional().describe("External reference for cross-linking systems"),
   display_number: z.string().trim().min(1).max(255).optional().describe("Manual matter number; only accepted when the Clio account permits it"),
@@ -80,7 +79,6 @@ function buildMatterData(input: Record<string, unknown>): Record<string, unknown
     ["originating_attorney_id", "originating_attorney"],
     ["responsible_staff_id", "responsible_staff"],
     ["matter_stage_id", "matter_stage"],
-    ["group_id", "group"],
   ] as const) {
     if (input[inputKey] !== undefined) data[apiKey] = { id: input[inputKey] };
   }
@@ -143,11 +141,6 @@ async function resolveMatterReferences(input: Record<string, unknown>, currentMa
       if (response?.data?.id !== input[inputKey] || response.data.enabled === false) throw new Error(`${outputKey} validation failed.`);
       refs[outputKey] = { id: response.data.id, name: response.data.name };
     }
-  }
-  if (input.group_id !== undefined) {
-    const response = await clioGet(`/groups/${input.group_id}.json`, { fields: "id,name" });
-    if (response?.data?.id !== input.group_id) throw new Error("Group validation failed.");
-    refs.group = { id: response.data.id, name: response.data.name };
   }
   if (input.relationships !== undefined) {
     const validated = [];
@@ -343,7 +336,6 @@ export function registerMatterTools(server: McpServer): void {
         originating_attorney_id: matterFieldsSchema.originating_attorney_id,
         responsible_staff_id: matterFieldsSchema.responsible_staff_id,
         matter_stage_id: matterFieldsSchema.matter_stage_id,
-        group_id: matterFieldsSchema.group_id,
         location: matterFieldsSchema.location,
         client_reference: matterFieldsSchema.client_reference,
         display_number: matterFieldsSchema.display_number,
@@ -363,6 +355,9 @@ export function registerMatterTools(server: McpServer): void {
       let writeAttempted = false;
       let fieldsChanged: string[] = [];
       try {
+        if ((input as Record<string, unknown>).group_id !== undefined) {
+          throw new Error("group_id is not supported by routine matter writes because it changes matter permissions.");
+        }
         if (input.matter_stage_id !== undefined) {
           throw new Error("matter_stage_id is not supported because stage changes can notify clients or trigger automated workflows outside the confirmed preview.");
         }
@@ -441,6 +436,9 @@ export function registerMatterTools(server: McpServer): void {
       let writeAttempted = false;
       let fieldsChanged: string[] = [];
       try {
+        if ((input as Record<string, unknown>).group_id !== undefined) {
+          throw new Error("group_id is not supported by routine matter writes because it changes matter permissions.");
+        }
         if (input.matter_stage_id !== undefined) {
           throw new Error("matter_stage_id is not supported because stage changes can notify clients or trigger automated workflows outside the confirmed preview.");
         }

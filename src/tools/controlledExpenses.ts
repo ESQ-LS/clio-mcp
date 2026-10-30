@@ -127,7 +127,7 @@ async function validateExpenseReferences(candidate: ExpenseCandidate): Promise<{
     throw new Error("A billable expense cannot be written to a non-billable matter.");
   }
   const billingMethod = String(matter.billing_method ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
-  const utbmsExemptBillingMethod = billingMethod === "flat_rate" || billingMethod === "contingency";
+  const utbmsExemptBillingMethod = billingMethod === "flat" || billingMethod === "flat_rate" || billingMethod === "contingency";
   if (candidate.billing_status === "billable" && matter.require_utbms_codes === true && !utbmsExemptBillingMethod) {
     throw new Error("This matter requires a UTBMS expense code, which this controlled tool does not accept.");
   }

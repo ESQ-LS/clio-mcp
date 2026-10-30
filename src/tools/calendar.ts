@@ -197,10 +197,13 @@ export function registerCalendarTools(server: McpServer): void {
         for (const attendee of requestedAttendees ?? []) {
           const endpoint = attendee.type === "Contact" ? "contacts" : "calendars";
           const fields = attendee.type === "Contact"
-            ? "id,name,type,email_addresses{address,name,default_email}"
+            ? "id,name,type,redacted,email_addresses{address,name,default_email}"
             : "id,name,type";
           const record = (await clioGet(`/${endpoint}/${attendee.id}.json`, { fields }))?.data;
           if (record?.id !== attendee.id) throw new Error(`${attendee.type} attendee ${attendee.id} validation failed.`);
+          if (attendee.type === "Contact" && record.redacted === true) {
+            throw new Error(`Contact attendee ${attendee.id} is restricted and cannot be added.`);
+          }
           const emailAddress = attendee.type === "Contact"
             ? defaultContactEmail(record.email_addresses)
             : undefined;

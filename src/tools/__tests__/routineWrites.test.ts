@@ -179,4 +179,26 @@ describe("routine preview-controlled writes", () => {
     expect(mockClioGet.mock.calls.filter(([path]) => path === "/users/42.json")).toHaveLength(1);
     expect(mockClioGet.mock.calls.filter(([path]) => path === "/contacts/77.json")).toHaveLength(1);
   });
+
+  it("rejects a redacted Contact communication participant before preview authorization", async () => {
+    mockClioGet.mockImplementation(async (path: string) => {
+      if (path === "/matters/99.json") return { data: { id: 99, display_number: "00099-001", description: "Synthetic", status: "open" } };
+      if (path === "/users/42.json") return { data: { id: 42, name: "Synthetic Lawyer" } };
+      if (path === "/contacts/77.json") return { data: { id: 77, name: "***", redacted: true } };
+      throw new Error(`unexpected path ${path}`);
+    });
+    const result = await handlersFor(registerCommunicationTools).create_communication({
+      matter_id: 99,
+      type: "EmailCommunication",
+      subject: "Synthetic email",
+      body: "Synthetic summary",
+      received_at: "2026-10-23T10:00:00-04:00",
+      senders: [{ id: 42, type: "User" }],
+      receivers: [{ id: 77, type: "Contact" }],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("restricted and cannot be used");
+    expect(mockClioPost).not.toHaveBeenCalled();
+    expect(mockClioGet).toHaveBeenCalledWith("/contacts/77.json", { fields: "id,name,redacted" });
+  });
 });

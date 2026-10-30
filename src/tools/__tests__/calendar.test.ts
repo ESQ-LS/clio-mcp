@@ -157,6 +157,26 @@ describe("controlled calendar writes", () => {
     expect(mockClioPost).not.toHaveBeenCalled();
   });
 
+  it("rejects a redacted Contact attendee before preview authorization", async () => {
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath === "/calendars.json") return { data: [{ id: 10, name: "Synthetic Calendar", type: "UserCalendar" }] };
+      if (requestPath === "/contacts/20.json") return { data: {
+        id: 20, name: "***", type: "Person", redacted: true,
+      } };
+      throw new Error(`unexpected path ${requestPath}`);
+    });
+    const result = await getHandlers().create_calendar_entry({
+      summary: "Synthetic meeting", start_at: "2026-11-01T09:00", end_at: "2026-11-01T10:00",
+      calendar_owner_id: 10, attendees: [{ id: 20, type: "Contact" }],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("restricted and cannot be added");
+    expect(mockClioPost).not.toHaveBeenCalled();
+    expect(mockClioGet).toHaveBeenCalledWith("/contacts/20.json", {
+      fields: "id,name,type,redacted,email_addresses{address,name,default_email}",
+    });
+  });
+
   it("rejects nonexistent calendar dates and times before API validation", async () => {
     const handlers = getHandlers();
     for (const [start_at, end_at] of [
