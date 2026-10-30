@@ -31,6 +31,7 @@ type CostType =
   | "third_party_fee_recovery"
   | "internal_non_billable_cost";
 type TaxSetting = "no_tax" | "tax_1_only" | "tax_2_only" | "tax_1_and_tax_2";
+type ExplicitTaxSetting = { tax_rate_configuration_id: number; order: 1 | 2; rule: "Pre" | "Post" };
 type Action = "create" | "update";
 
 interface ExpenseCandidate {
@@ -69,6 +70,39 @@ function parseExpenseNote(note: unknown): { description: string; source_referenc
     description: value.slice(0, markerIndex),
     source_reference: value.slice(markerIndex + 2 + SOURCE_REFERENCE_PREFIX.length),
   };
+}
+
+const explicitTaxSettingSchema = z.object({
+  tax_rate_configuration_id: z.number().int().positive(),
+  order: z.union([z.literal(1), z.literal(2)]),
+  rule: z.enum(["Pre", "Post"]).default("Pre"),
+});
+
+async function resolveExplicitTaxSettings(settings: ExplicitTaxSetting[] | undefined): Promise<any[] | undefined> {
+  if (settings === undefined) return undefined;
+  if (new Set(settings.map(({ order }) => order)).size !== settings.length) {
+    throw new Error("Explicit expense tax settings must use unique orders.");
+  }
+  return Promise.all(settings.map(async (setting) => {
+    const response = await clioGet(`/tax_rate_configurations/${setting.tax_rate_configuration_id}.json`, {
+      fields: "id,etag,name,rate,rate_as_percentage,active",
+    });
+    const configuration = response?.data;
+    if (configuration?.id !== setting.tax_rate_configuration_id || configuration.active !== true) {
+      throw new Error(`Tax-rate configuration ${setting.tax_rate_configuration_id} is invalid or inactive.`);
+    }
+    return {
+      tax_rate_configuration: {
+        id: configuration.id,
+        etag: configuration.etag ?? null,
+        name: configuration.name,
+        rate: configuration.rate,
+        rate_as_percentage: configuration.rate_as_percentage,
+      },
+      order: setting.order,
+      rule: setting.rule,
+    };
+  }));
 }
 
 function normalizeSourceReference(value: unknown): string {
@@ -230,7 +264,8 @@ const expenseCreateSchema = {
   description: z.string().trim().min(5).max(1750).describe("Matter-specific expense description"),
   source_reference: z.string().trim().min(2).max(200).regex(/^[^\r\n]+$/).describe("Single-line supplier invoice or other source reference; appended to the Clio note and never audit-logged"),
   billing_status: z.enum(["billable", "non_billable", "no_charge"]),
-  tax_setting: z.enum(["no_tax", "tax_1_only", "tax_2_only", "tax_1_and_tax_2"]),
+  tax_setting: z.literal("no_tax").describe("Use no_tax; when explicit tax_settings are supplied, those signed configurations override it"),
+  tax_settings: z.array(explicitTaxSettingSchema).min(1).max(2).optional(),
   cost_type: z.enum([
     "client_recoverable_direct_cost",
     "third_party_fee_recovery",
@@ -337,7 +372,7 @@ export function registerControlledExpenseTools(server: McpServer): void {
       inputSchema: expenseCreateSchema,
       annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
-    async ({ matter_id, allocation_matter_id, date, amount, expense_category_id, description, source_reference, billing_status, tax_setting, cost_type, confirm_write, preview_token }) => {
+    async ({ matter_id, allocation_matter_id, date, amount, expense_category_id, description, source_reference, billing_status, tax_setting, tax_settings, cost_type, confirm_write, preview_token }) => {
       let writeAttempted = false;
       try {
         if (allocation_matter_id !== matter_id) {
@@ -347,6 +382,7 @@ export function registerControlledExpenseTools(server: McpServer): void {
           matter_id, date, amount, expense_category_id, description, source_reference,
           billing_status, tax_setting, cost_type,
         };
+        const resolvedTaxSettings = await resolveExplicitTaxSettings(tax_settings);
         const refs = await validateExpenseReferences(candidate);
         const duplicate = await findDuplicateExpense(candidate);
         if (duplicate) {
@@ -366,7 +402,8 @@ export function registerControlledExpenseTools(server: McpServer): void {
           description,
           source_reference,
           billing_status,
-          tax_setting,
+          tax_setting: resolvedTaxSettings ? null : tax_setting,
+          ...(resolvedTaxSettings && { tax_settings: resolvedTaxSettings }),
           cost_type,
         };
 
@@ -407,7 +444,9 @@ export function registerControlledExpenseTools(server: McpServer): void {
             note: composeExpenseNote(description, source_reference),
             non_billable: flags.non_billable,
             no_charge: flags.no_charge,
-            tax_setting,
+            ...(tax_settings
+              ? { tax_settings }
+              : { tax_setting }),
             matter: { id: matter_id },
             expense_category: { id: expense_category_id },
           },
@@ -460,7 +499,8 @@ export function registerControlledExpenseTools(server: McpServer): void {
         description: z.string().trim().min(5).max(1750).optional(),
         source_reference: z.string().trim().min(2).max(200).regex(/^[^\r\n]+$/).optional(),
         billing_status: z.enum(["billable", "non_billable", "no_charge"]).optional(),
-        tax_setting: z.enum(["no_tax", "tax_1_only", "tax_2_only", "tax_1_and_tax_2"]).optional(),
+        tax_setting: z.literal("no_tax").optional().describe("Clear taxes, or supply explicit tax_settings so the approved rates cannot drift"),
+        tax_settings: z.array(explicitTaxSettingSchema).min(1).max(2).optional(),
         cost_type: z.enum([
           "client_recoverable_direct_cost",
           "third_party_fee_recovery",
@@ -471,7 +511,7 @@ export function registerControlledExpenseTools(server: McpServer): void {
       },
       annotations: CLIO_UPDATE_TOOL_ANNOTATIONS,
     },
-    async ({ activity_id, etag, allocation_matter_id, date, amount, expense_category_id, description, source_reference, billing_status, tax_setting, cost_type, confirm_write, preview_token }) => {
+    async ({ activity_id, etag, allocation_matter_id, date, amount, expense_category_id, description, source_reference, billing_status, tax_setting, tax_settings, cost_type, confirm_write, preview_token }) => {
       let writeAttempted = false;
       let matterId = 0;
       const fieldsChanged = [
@@ -482,6 +522,7 @@ export function registerControlledExpenseTools(server: McpServer): void {
         source_reference !== undefined && "source_reference",
         billing_status !== undefined && "billing_status",
         tax_setting !== undefined && "tax_setting",
+        tax_settings !== undefined && "tax_settings",
       ].filter(Boolean) as string[];
       try {
         if (fieldsChanged.length === 0) throw new Error("At least one editable field must be supplied.");
@@ -508,6 +549,7 @@ export function registerControlledExpenseTools(server: McpServer): void {
           tax_setting: tax_setting ?? current.tax_setting ?? "no_tax",
           cost_type,
         };
+        const resolvedTaxSettings = await resolveExplicitTaxSettings(tax_settings);
         const quantity = Number(current.quantity);
         if (!Number.isFinite(quantity) || quantity <= 0) {
           throw new Error("Clio returned an invalid expense quantity; no update can be previewed safely.");
@@ -534,7 +576,8 @@ export function registerControlledExpenseTools(server: McpServer): void {
           description: candidate.description,
           source_reference: candidate.source_reference,
           billing_status: candidate.billing_status,
-          tax_setting: candidate.tax_setting,
+          tax_setting: resolvedTaxSettings ? null : candidate.tax_setting,
+          tax_settings: resolvedTaxSettings ?? current.tax_settings ?? [],
           cost_type,
           fields_changed: fieldsChanged,
         };
@@ -574,6 +617,7 @@ export function registerControlledExpenseTools(server: McpServer): void {
         }
         if (billing_status !== undefined) Object.assign(data, billingFlags(billing_status));
         if (tax_setting !== undefined) data.tax_setting = tax_setting;
+        if (tax_settings !== undefined) data.tax_settings = tax_settings;
         writeAttempted = true;
         const response = await clioPatch(
           `/activities/${activity_id}.json?fields=${encodeURIComponent(EXPENSE_FIELDS)}`,

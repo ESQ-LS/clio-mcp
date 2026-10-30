@@ -276,14 +276,18 @@ Then point Claude Desktop at it via the [`mcp-remote`](https://www.npmjs.com/pac
   "mcpServers": {
     "clio": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://127.0.0.1:3000/mcp", "--header", "Authorization: Bearer replace_with_a_long_random_secret"]
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:3000/mcp", "--header", "Authorization:${CLIO_MCP_AUTH_HEADER}"],
+      "env": {
+        "CLIO_MCP_AUTH_HEADER": "Bearer replace_with_a_long_random_secret"
+      }
     }
   }
 }
 ```
 
-HTTP mode requires `MCP_API_KEY`. Pass the same value from `mcp-remote` in the
-`Authorization: Bearer <key>` header. The health endpoint and OAuth browser
+HTTP mode requires `MCP_API_KEY`. Pass the same value through `mcp-remote`'s
+environment interpolation as shown above so the key is not exposed in process
+arguments. The health endpoint and OAuth browser
 callback remain public; every MCP tool request is authenticated.
 
 ---

@@ -127,6 +127,18 @@ describe("custom-field reference validation", () => {
     ], "Contact")).rejects.toThrow("at most two decimal places");
   });
 
+  it.each([
+    ["text_line", "x".repeat(256), "at most 255 characters"],
+    ["text_area", "x".repeat(64_001), "at most 64000 characters"],
+  ])("rejects overlong %s values", async (fieldType, value, message) => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 202, name: "Synthetic text", field_type: fieldType, parent_type: "Contact",
+    } });
+    await expect(resolveCustomFieldValueDetails([
+      { custom_field_id: 202, value },
+    ], "Contact")).rejects.toThrow(message);
+  });
+
   it("rejects unsupported custom-field types before preview authorization", async () => {
     mockClioGet.mockResolvedValue({ data: {
       id: 200, name: "Synthetic unknown", field_type: "future_type", parent_type: "Contact",

@@ -102,6 +102,7 @@ const contactFieldsSchema = {
   addresses: z.array(addressSchema).max(20).optional(),
   web_sites: z.array(webSiteSchema).max(20).optional(),
 };
+const { clio_connect_email: _clioConnectEmail, ...routineContactFieldsSchema } = contactFieldsSchema;
 
 function buildContactData(input: Record<string, unknown>): Record<string, unknown> {
   const data: Record<string, unknown> = {};
@@ -176,8 +177,11 @@ async function findPossibleContactDuplicates(input: Record<string, unknown>): Pr
   const pluralEmails = Array.isArray(input.email_addresses)
     ? input.email_addresses.map((entry: any) => entry?.address)
     : [];
+  const pluralPhones = Array.isArray(input.phone_numbers)
+    ? input.phone_numbers.map((entry: any) => entry?.number)
+    : [];
   const duplicateQueries = [...new Set(
-    [input.name, input.email, ...pluralEmails]
+    [input.name, input.email, input.phone, ...pluralEmails, ...pluralPhones]
       .filter((value): value is string => typeof value === "string" && Boolean(value)),
   )];
   const duplicateResponses = await Promise.all(duplicateQueries.map((query) => clioGet("/contacts.json", {
@@ -593,7 +597,7 @@ export function registerContactTools(server: McpServer): void {
         "Dry-run by default. Reads the current contact and displays the exact proposed changes. A production write requires confirm_write: true plus the unexpired preview_token; the token is invalidated if the contact changes before confirmation.",
       inputSchema: {
         contact_id: z.number().int().positive().describe("Exact Clio contact ID"),
-        ...contactFieldsSchema,
+        ...routineContactFieldsSchema,
         email_id: z.number().int().positive().optional().describe("Existing email entry ID; use to select among multiple entries"),
         phone_id: z.number().int().positive().optional().describe("Existing phone entry ID; use to select among multiple entries"),
         address_id: z.number().int().positive().optional().describe("Existing address entry ID; use to select among multiple entries"),
@@ -608,6 +612,9 @@ export function registerContactTools(server: McpServer): void {
       let writeAttempted = false;
       let fieldsChanged: string[] = [];
       try {
+        if ((input as Record<string, unknown>).clio_connect_email !== undefined) {
+          throw new Error("clio_connect_email is not supported by routine contact updates because it changes the portal notification destination.");
+        }
         assertNoConflictingContactAliases(input);
         const preliminaryData = buildContactData(input);
         fieldsChanged = Object.keys(preliminaryData);

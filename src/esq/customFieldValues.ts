@@ -39,10 +39,14 @@ function validateScalarValue(value: unknown, fieldType: string): void {
   const stringValue = typeof value === "string" ? value : null;
   switch (fieldType) {
     case "text_line":
-      if (stringValue === null || /[\r\n]/.test(stringValue)) throw new Error("text_line custom field values must be single-line strings.");
+      if (stringValue === null || /[\r\n]/.test(stringValue) || stringValue.length > 255) {
+        throw new Error("text_line custom field values must be single-line strings of at most 255 characters.");
+      }
       return;
     case "text_area":
-      if (stringValue === null) throw new Error("text_area custom field values must be strings.");
+      if (stringValue === null || stringValue.length > 64_000) {
+        throw new Error("text_area custom field values must be strings of at most 64000 characters.");
+      }
       return;
     case "numeric": {
       const parsed = typeof value === "number" ? value : stringValue !== null && /^\d+$/.test(stringValue) ? Number(stringValue) : NaN;

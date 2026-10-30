@@ -188,6 +188,65 @@ describe("create_expense_entry", () => {
     );
   });
 
+  it("resolves and signs explicit tax configurations before writing them", async () => {
+    mockClioGet.mockImplementation(async (path: string) => {
+      if (path === "/matters/101.json") return { data: MATTER };
+      if (path === "/expense_categories/77.json") return { data: CATEGORY };
+      if (path === "/activities.json") return { data: [] };
+      if (path === "/tax_rate_configurations/901.json") return { data: {
+        id: 901, etag: "tax-v1", name: "Synthetic HST", rate: 0.13,
+        rate_as_percentage: 13, active: true,
+      } };
+      throw new Error(`unexpected path ${path}`);
+    });
+    const handlers = buildHandlers();
+    const args = {
+      ...CREATE_ARGS,
+      tax_settings: [{ tax_rate_configuration_id: 901, order: 1, rule: "Pre" }],
+    };
+    const preview = JSON.parse((await handlers.create_expense_entry(args)).content[0].text);
+    expect(preview.proposal).toMatchObject({
+      tax_setting: null,
+      tax_settings: [{
+        tax_rate_configuration: { id: 901, etag: "tax-v1", rate: 0.13, rate_as_percentage: 13 },
+        order: 1, rule: "Pre",
+      }],
+    });
+    await handlers.create_expense_entry({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(mockClioPost).toHaveBeenCalledWith(expect.stringMatching(/^\/activities\.json\?fields=/), {
+      data: expect.objectContaining({ tax_settings: args.tax_settings }),
+    });
+  });
+
+  it("rejects confirmation when an explicit tax configuration changes after preview", async () => {
+    let taxVersion = 1;
+    mockClioGet.mockImplementation(async (path: string) => {
+      if (path === "/matters/101.json") return { data: MATTER };
+      if (path === "/expense_categories/77.json") return { data: CATEGORY };
+      if (path === "/activities.json") return { data: [] };
+      if (path === "/tax_rate_configurations/901.json") return { data: {
+        id: 901, etag: `tax-v${taxVersion}`, name: "Synthetic HST",
+        rate: taxVersion === 1 ? 0.13 : 0.14,
+        rate_as_percentage: taxVersion === 1 ? 13 : 14,
+        active: true,
+      } };
+      throw new Error(`unexpected path ${path}`);
+    });
+    const handlers = buildHandlers();
+    const args = {
+      ...CREATE_ARGS,
+      tax_settings: [{ tax_rate_configuration_id: 901, order: 1, rule: "Pre" }],
+    };
+    const preview = JSON.parse((await handlers.create_expense_entry(args)).content[0].text);
+    taxVersion = 2;
+    const result = await handlers.create_expense_entry({
+      ...args, confirm_write: true, preview_token: preview.preview_token,
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toContain("proposal changed");
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
   it("rejects cross-matter allocation before any Clio request", async () => {
     const result = await buildHandlers().create_expense_entry({ ...CREATE_ARGS, allocation_matter_id: 202 });
     expect(result.isError).toBe(true);

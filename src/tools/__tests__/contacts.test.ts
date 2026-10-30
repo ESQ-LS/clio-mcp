@@ -150,6 +150,45 @@ describe("controlled contact writes", () => {
     expect(preview.possible_duplicates.map((contact: any) => contact.id)).toEqual([9, 10]);
   });
 
+  it("includes singular and plural phone numbers in duplicate screening", async () => {
+    mockClioGet.mockResolvedValue({ data: [] });
+    await getHandlers().create_contact({
+      type: "Company",
+      name: "Synthetic Co",
+      phone: "4165550100",
+    });
+    expect(mockClioGet.mock.calls.map((call) => call[1].query)).toEqual([
+      "Synthetic Co", "4165550100",
+    ]);
+
+    mockClioGet.mockClear().mockResolvedValue({ data: [] });
+    await getHandlers().create_contact({
+      type: "Company",
+      name: "Synthetic Co",
+      phone_numbers: [{ name: "Mobile", number: "4165550200" }],
+    });
+    expect(mockClioGet.mock.calls.map((call) => call[1].query)).toEqual([
+      "Synthetic Co", "4165550200",
+    ]);
+  });
+
+  it("removes portal-email changes from routine contact updates", async () => {
+    const configs: Record<string, any> = {};
+    const handlers: Record<string, Function> = {};
+    registerContactTools({
+      registerTool: (name: string, config: unknown, handler: Function) => {
+        configs[name] = config;
+        handlers[name] = handler;
+      },
+    } as unknown as McpServer);
+    expect(configs.update_contact.inputSchema).not.toHaveProperty("clio_connect_email");
+    const result = await handlers.update_contact({ contact_id: 42, clio_connect_email: "portal@example.test" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("portal notification destination");
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
   it("includes ordinary profile and custom fields in an unchanged create", async () => {
     mockClioGet.mockImplementation(async (requestPath: string) => {
       if (requestPath === "/custom_fields/7001.json") return { data: {
