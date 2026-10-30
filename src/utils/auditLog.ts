@@ -13,6 +13,7 @@ const AUDIT_FILE = path.join(AUDIT_DIR, "audit.log");
 const REDACTED_KEYS = new Set([
   "access_token", "refresh_token", "client_secret", "password", "token", "encryption_key",
   "note", "narrative", "description", "supporting_evidence", "evidence",
+  "source_reference", "supplier_invoice", "invoice_number",
 ]);
 
 function detectMachineIp(): string | undefined {

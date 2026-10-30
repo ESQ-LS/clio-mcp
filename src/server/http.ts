@@ -14,6 +14,7 @@ import { registerTaskTools } from "../tools/tasks.js";
 import { registerCalendarTools } from "../tools/calendar.js";
 import { registerActivityTools } from "../tools/activities.js";
 import { registerControlledTimeEntryTools } from "../tools/controlledTimeEntries.js";
+import { registerControlledExpenseTools } from "../tools/controlledExpenses.js";
 import { registerBillingTools } from "../tools/billing.js";
 import { registerCommunicationTools } from "../tools/communications.js";
 import { registerNoteTools } from "../tools/notes.js";
@@ -52,6 +53,7 @@ function createMcpServer(): McpServer {
   registerCalendarTools(server);
   registerActivityTools(server);
   registerControlledTimeEntryTools(server);
+  registerControlledExpenseTools(server);
   registerBillingTools(server);
   registerCommunicationTools(server);
   registerNoteTools(server);

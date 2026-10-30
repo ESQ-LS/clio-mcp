@@ -18,13 +18,31 @@ vi.mock("../../auth/tokenStorage.js", () => ({
 }));
 
 import { readExactBytes, registerDocumentTools } from "../documents.js";
+import { ClioApiError } from "../../utils/clioClient.js";
 
 let tempDir = "";
 beforeEach(async () => {
   vi.clearAllMocks();
   process.env.ENCRYPTION_KEY = "1".repeat(64);
   mockAppendAuditLog.mockResolvedValue(true);
-  mockClioGet.mockResolvedValue({ data: { id: 99, display_number: "00099-001", description: "Synthetic", status: "open" } });
+  mockClioGet.mockImplementation(async (requestPath: string) => {
+    if (requestPath === "/matters/99.json") {
+      return { data: { id: 99, display_number: "00099-001", description: "Synthetic", status: "open", redacted: false } };
+    }
+    if (requestPath === "/documents.json") return { data: [] };
+    if (requestPath === "/documents/7.json") {
+      return { data: {
+        id: 7,
+        name: "synthetic.txt",
+        content_type: "text/plain",
+        size: 14,
+        matter: { id: 99, display_number: "00099-001" },
+        parent: { id: 99, type: "Matter" },
+        latest_document_version: { uuid: "synthetic-version", size: 14, fully_uploaded: true },
+      } };
+    }
+    throw new Error(`Unexpected synthetic request: ${requestPath}`);
+  });
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "clio-doc-test-"));
   process.env.ESQ_CLIO_UPLOAD_ROOT = tempDir;
 });
@@ -142,6 +160,116 @@ describe("controlled document upload", () => {
     openSpy.mockRestore();
   });
 
+  it("rejects an existing same-name same-size document", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath === "/matters/99.json") {
+        return { data: { id: 99, display_number: "00099-001", description: "Synthetic", status: "open" } };
+      }
+      if (requestPath === "/documents.json") {
+        return { data: [{ id: 6, name: "synthetic.txt", size: 14, matter: { id: 99 } }] };
+      }
+      throw new Error(`Unexpected synthetic request: ${requestPath}`);
+    });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const result = await handlers.upload_document({ file_path: filePath, matter_id: 99 });
+    expect(JSON.parse(result.content[0].text).error).toMatch(/Duplicate document rejected/);
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe target document names", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const result = await handlers.upload_document({
+      file_path: filePath,
+      matter_id: 99,
+      name: "../other-matter.txt",
+    });
+    expect(JSON.parse(result.content[0].text).error).toMatch(/Document name must be/);
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects a redacted matter before duplicate screening or upload", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    mockClioGet.mockResolvedValueOnce({
+      data: { id: 99, display_number: "00099-001", status: "open", redacted: true },
+    });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const result = await handlers.upload_document({ file_path: filePath, matter_id: 99 });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toMatch(/cannot access the full matter/);
+    expect(mockClioGet).toHaveBeenCalledTimes(1);
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
+  it("validates an optional folder within the matter and verifies the folder parent after upload", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    mockClioGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath === "/matters/99.json") {
+        return { data: { id: 99, display_number: "00099-001", status: "open", redacted: false } };
+      }
+      if (requestPath === "/folders/55.json") {
+        return { data: {
+          id: 55, name: "Synthetic folder", type: "Folder", locked: false,
+          matter: { id: 99, display_number: "00099-001", redacted: false },
+        } };
+      }
+      if (requestPath === "/documents.json") return { data: [] };
+      if (requestPath === "/documents/7.json") {
+        return { data: {
+          id: 7, name: "synthetic.txt", size: 14,
+          matter: { id: 99 }, parent: { id: 55, type: "Folder" },
+          latest_document_version: { uuid: "synthetic-version", size: 14, fully_uploaded: true },
+        } };
+      }
+      throw new Error(`Unexpected synthetic request: ${requestPath}`);
+    });
+    mockClioPost.mockResolvedValue({ data: { id: 7, latest_document_version: {
+      uuid: "synthetic-version", multiparts: [{ part_number: 1, put_url: "https://upload.test", put_headers: [] }],
+    } } });
+    mockClioPatch.mockResolvedValue({ data: { id: 7 } });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (toolName: string, _schema: unknown, handler: Function) => { handlers[toolName] = handler; } } as any);
+    const args = { file_path: filePath, matter_id: 99, folder_id: 55 };
+    const preview = JSON.parse((await handlers.upload_document(args)).content[0].text);
+    expect(preview.proposal.parent).toEqual({ id: 55, type: "Folder", name: "Synthetic folder" });
+    const result = await handlers.upload_document({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).not.toBe(true);
+    expect(mockClioPost).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/documents\.json\?fields=/),
+      expect.objectContaining({ data: expect.objectContaining({ parent: { id: 55, type: "Folder" } }) }),
+    );
+    expect(JSON.parse(result.content[0].text).target_parent).toEqual({ id: 55, type: "Folder" });
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects a folder that belongs to another matter", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    const originalGet = mockClioGet.getMockImplementation()!;
+    mockClioGet.mockImplementation(async (requestPath: string, params?: unknown) => {
+      if (requestPath === "/folders/55.json") {
+        return { data: { id: 55, type: "Folder", locked: false, matter: { id: 202, redacted: false } } };
+      }
+      return originalGet(requestPath, params);
+    });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (toolName: string, _schema: unknown, handler: Function) => { handlers[toolName] = handler; } } as any);
+    const result = await handlers.upload_document({ file_path: filePath, matter_id: 99, folder_id: 55 });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toMatch(/not accessible within the target matter/);
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
   it("bounds the snapshot stream to the validated size", async () => {
     const filePath = path.join(tempDir, "growing.txt");
     const original = "approved bytes";
@@ -221,6 +349,102 @@ describe("controlled document upload", () => {
     expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       tool: "upload_document", outcome: "success", record_id: 7,
     }));
+    vi.unstubAllGlobals();
+  });
+
+  it("retries a transient part-upload failure without recreating the Clio document", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    const upload = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", upload);
+    mockClioPost.mockResolvedValue({ data: { id: 7, latest_document_version: {
+      uuid: "synthetic-version", multiparts: [{ part_number: 1, put_url: "https://upload.test", put_headers: [] }],
+    } } });
+    mockClioPatch.mockResolvedValue({ data: { id: 7 } });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const args = { file_path: filePath, matter_id: 99 };
+    const preview = JSON.parse((await handlers.upload_document(args)).content[0].text);
+    const result = await handlers.upload_document({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).not.toBe(true);
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(mockClioPost).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("does not retry a permanent part-upload authorization failure", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    const upload = vi.fn().mockResolvedValue({ ok: false, status: 403 });
+    vi.stubGlobal("fetch", upload);
+    mockClioPost.mockResolvedValue({ data: { id: 7, latest_document_version: {
+      uuid: "synthetic-version", multiparts: [{ part_number: 1, put_url: "https://upload.test", put_headers: [] }],
+    } } });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const args = { file_path: filePath, matter_id: 99 };
+    const preview = JSON.parse((await handlers.upload_document(args)).content[0].text);
+    const result = await handlers.upload_document({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      write_performed: "unknown",
+      error: expect.stringMatching(/S3 upload failed.*HTTP 403/),
+    });
+    expect(upload).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("fails closed when post-upload read-back does not confirm the target matter", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    mockClioPost.mockResolvedValue({ data: { id: 7, latest_document_version: {
+      uuid: "synthetic-version", multiparts: [{ part_number: 1, put_url: "https://upload.test", put_headers: [] }],
+    } } });
+    mockClioPatch.mockResolvedValue({ data: { id: 7 } });
+    const originalGet = mockClioGet.getMockImplementation()!;
+    mockClioGet.mockImplementation(async (requestPath: string, params?: unknown) => {
+      if (requestPath === "/documents/7.json") {
+        return { data: {
+          id: 7, name: "synthetic.txt", size: 14,
+          matter: { id: 202 }, parent: { id: 202, type: "Matter" },
+          latest_document_version: { uuid: "synthetic-version", size: 14, fully_uploaded: true },
+        } };
+      }
+      return originalGet(requestPath, params);
+    });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const args = { file_path: filePath, matter_id: 99 };
+    const preview = JSON.parse((await handlers.upload_document(args)).content[0].text);
+    const result = await handlers.upload_document({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      write_performed: "unknown",
+      error: expect.stringMatching(/target matter and parent association/),
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it("retries a Clio UploadTimeoutError when marking the document fully uploaded", async () => {
+    const filePath = path.join(tempDir, "synthetic.txt");
+    await fs.writeFile(filePath, "approved bytes");
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    mockClioPost.mockResolvedValue({ data: { id: 7, latest_document_version: {
+      uuid: "synthetic-version", multiparts: [{ part_number: 1, put_url: "https://upload.test", put_headers: [] }],
+    } } });
+    mockClioPatch
+      .mockRejectedValueOnce(new ClioApiError(422, "Document verification timed out.", "UploadTimeoutError"))
+      .mockResolvedValueOnce({ data: { id: 7 } });
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const args = { file_path: filePath, matter_id: 99 };
+    const preview = JSON.parse((await handlers.upload_document(args)).content[0].text);
+    const result = await handlers.upload_document({ ...args, confirm_write: true, preview_token: preview.preview_token });
+    expect(result.isError).not.toBe(true);
+    expect(mockClioPatch).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
   });
 

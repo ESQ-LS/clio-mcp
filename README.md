@@ -375,7 +375,7 @@ change. All four tools remain gated by `ESQ_WRITE_TOOLS`.
 |---|---|---|
 | `list_documents` | `matter_id`, `parent_id`, `query`, `limit`, `page_token` | Lists or full-text searches documents; at least one of `matter_id`, `parent_id`, or `query` is required; returns a paginated envelope with `total_count`, `has_more`, and `next_page_token` |
 | `get_document` | `document_id` | Returns document metadata and a direct download URL |
-| `upload_document` | file and target fields, `confirm_write`, `preview_token` | Verifies the exact file and target matter, previews its SHA-256, then uploads it through Clio's multipart flow after confirmation |
+| `upload_document` | `file_path`, `matter_id`, optional `folder_id`/name/type, `confirm_write`, `preview_token` | Rejects empty/out-of-root files and same-name/same-size duplicates, validates an optional folder within the matter, previews the exact SHA-256, uploads through Clio's multipart flow with bounded part retries, retries verification timeouts, and reads the document back to confirm the matter and parent association |
 
 ### Tasks (4 tools)
 
@@ -402,6 +402,21 @@ change. All four tools remain gated by `ESQ_WRITE_TOOLS`.
 | `log_time_entry` | `matter_id`, `date`, `quantity_in_hours`, `note`, `price`, `non_billable`, `no_charge`, `activity_description_id`, `user_id` | Creates a new billable (or non-billable) time entry on a matter |
 | `create_activity` | `type`, `date`, `matter_id`, `note`, `quantity_in_hours`, `price`, `non_billable`, `no_charge`, `activity_description_id`, `user_id`, `reference`, `tax_setting` | Creates any Clio activity type — TimeEntry, ExpenseEntry, HardCostEntry, or SoftCostEntry |
 
+### Expense entries (4 tools)
+
+| Tool | Inputs | What it does |
+|---|---|---|
+| `list_expense_entries` | matter/category/date/status filters, `limit`, `page_token` | Lists only Clio `ExpenseEntry` activities with ETags, billing state, category, tax fields, and cursor pagination |
+| `get_expense_entry` | `activity_id` | Retrieves one exact `ExpenseEntry` and its current ETag |
+| `create_expense_entry` | matter/allocation, date, amount, category, description, source reference, billing/tax/cost classification, confirmation fields | Validates the matter and category, rejects cross-matter allocations and duplicates, then dry-runs before any write |
+| `update_expense_entry` | `activity_id`, `etag`, allocation and editable fields, confirmation fields | Updates only an unbilled `ExpenseEntry`, preserves its matter, repeats duplicate checks, and uses `If-Match` |
+
+The controlled expense tools intentionally create only Clio `ExpenseEntry`
+activities. They do not parse supplier invoices, decide whether a cost is
+recoverable, create hard/soft-cost records, or support mandatory UTBMS expense
+codes. See [DOCUMENT-EXPENSE-MANAGEMENT.md](docs/DOCUMENT-EXPENSE-MANAGEMENT.md)
+for schemas, examples, permissions, limitations, deployment, and acceptance.
+
 ### ESQ controlled writes
 
 The ESQ production fork is read-only unless a write tool is explicitly named in
@@ -414,7 +429,9 @@ Deletion, trust transfers, permission changes, and bulk mutation are not impleme
 
 Document uploads additionally require `ESQ_CLIO_UPLOAD_ROOT` to be an absolute,
 operator-approved staging directory. Uploads outside its resolved path and
-symbolic-link inputs are rejected. Matter lifecycle defaults use
+symbolic-link inputs are rejected. Empty files and same-name/same-size duplicates
+are rejected. Successful uploads are read back from Clio to verify the exact
+matter association and fully-uploaded metadata. Matter lifecycle defaults use
 `ESQ_FIRM_TIMEZONE` (default `America/Toronto`) rather than the container's UTC
 calendar date.
 

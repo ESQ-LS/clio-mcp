@@ -72,6 +72,25 @@ describe("appendAuditLog", () => {
     expect(written).toContain('"supporting_evidence":"[REDACTED]"');
   });
 
+  it("redacts supplier invoice references defensively", async () => {
+    await appendAuditLog({
+      tool: "create_expense_entry",
+      action: "create",
+      confirmation_state: "dry_run",
+      outcome: "success",
+      matter_id: 101,
+      args: {
+        source_reference: "SYNTHETIC-INVOICE-PRIVATE",
+        invoice_number: "SYNTHETIC-INVOICE-NUMBER",
+      },
+    });
+    const written = mockAppendFile.mock.calls[0][1] as string;
+    expect(written).not.toContain("SYNTHETIC-INVOICE-PRIVATE");
+    expect(written).not.toContain("SYNTHETIC-INVOICE-NUMBER");
+    expect(written).toContain('"source_reference":"[REDACTED]"');
+    expect(written).toContain('"invoice_number":"[REDACTED]"');
+  });
+
   it("reports persistence failure to confirmation-gated callers", async () => {
     mockAppendFile.mockRejectedValueOnce(new Error("synthetic disk failure"));
     const persisted = await appendAuditLog({ tool: "create_time_entry", args: {}, outcome: "error" });

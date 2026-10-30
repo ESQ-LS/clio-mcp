@@ -28,6 +28,8 @@ const WRITE_TOOLS = new Set<string>([
   "create_activity",
   "create_time_entry",
   "update_time_entry",
+  "create_expense_entry",
+  "update_expense_entry",
   "create_task",
   "update_task",
   "complete_task",

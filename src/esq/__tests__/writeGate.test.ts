@@ -15,6 +15,8 @@ function registeredWith(writeTools: string, transport = "stdio", apiKey?: string
   server.registerTool("list_time_entries", {} as any, vi.fn());
   server.registerTool("create_time_entry", {} as any, vi.fn());
   server.registerTool("update_time_entry", {} as any, vi.fn());
+  server.registerTool("create_expense_entry", {} as any, vi.fn());
+  server.registerTool("update_expense_entry", {} as any, vi.fn());
   server.registerTool("log_time_entry", {} as any, vi.fn());
   server.registerTool("create_activity", {} as any, vi.fn());
   server.registerTool("create_contact", {} as any, vi.fn());
@@ -62,6 +64,14 @@ describe("ESQ controlled time-entry write gate", () => {
     expect(registeredWith("upload_document")).toEqual([
       "list_time_entries",
       "upload_document",
+    ]);
+  });
+
+  it("exposes only expressly allowlisted controlled expense writes", () => {
+    expect(registeredWith("create_expense_entry,update_expense_entry")).toEqual([
+      "list_time_entries",
+      "create_expense_entry",
+      "update_expense_entry",
     ]);
   });
 

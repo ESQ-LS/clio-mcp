@@ -11,6 +11,7 @@ import { registerCalendarTools } from "../calendar.js";
 import { registerCommunicationTools } from "../communications.js";
 import { registerContactTools } from "../contacts.js";
 import { registerControlledTimeEntryTools } from "../controlledTimeEntries.js";
+import { registerControlledExpenseTools } from "../controlledExpenses.js";
 import { registerDocumentTools } from "../documents.js";
 import { registerMatterTools } from "../matters.js";
 import { registerNoteTools } from "../notes.js";
@@ -21,6 +22,7 @@ const CLIO_READ_TOOLS = [
   "get_billing_summary",
   "get_contact",
   "get_document",
+  "get_expense_entry",
   "get_matter",
   "get_time_entry",
   "get_user",
@@ -30,6 +32,7 @@ const CLIO_READ_TOOLS = [
   "list_calendars",
   "list_communications",
   "list_documents",
+  "list_expense_entries",
   "list_matters",
   "list_tasks",
   "list_time_entries",
@@ -52,6 +55,7 @@ const ADDITIVE_WRITE_TOOLS = [
   "create_note",
   "create_task",
   "create_time_entry",
+  "create_expense_entry",
   "log_time_entry",
   "upload_document",
 ] as const;
@@ -65,6 +69,7 @@ const DESTRUCTIVE_UPDATE_TOOLS = [
 
 const NONDESTRUCTIVE_UPDATE_TOOLS = [
   "update_time_entry",
+  "update_expense_entry",
 ] as const;
 
 afterEach(() => {
@@ -81,6 +86,7 @@ function registerAllTools(server: McpServer): void {
   registerCalendarTools(server);
   registerActivityTools(server);
   registerControlledTimeEntryTools(server);
+  registerControlledExpenseTools(server);
   registerBillingTools(server);
   registerCommunicationTools(server);
   registerNoteTools(server);
@@ -119,6 +125,7 @@ describe("read-only MCP annotations", () => {
         "get_billing_summary",
         "get_contact",
         "get_document",
+        "get_expense_entry",
         "get_matter",
         "get_time_entry",
         "get_user",
@@ -128,6 +135,7 @@ describe("read-only MCP annotations", () => {
         "list_calendars",
         "list_communications",
         "list_documents",
+        "list_expense_entries",
         "list_matters",
         "list_tasks",
         "list_time_entries",
@@ -169,7 +177,6 @@ describe("read-only MCP annotations", () => {
         idempotentHint: false,
         openWorldHint: true,
       });
-
       for (const name of Object.keys(byName)) {
         expect(byName[name].annotations, name).toBeDefined();
       }
@@ -228,12 +235,41 @@ describe("read-only MCP annotations", () => {
     }
   });
 
+  it("publishes the explicit financial and allocation fields required for expense creation", async () => {
+    const { client, server, tools } = await discoverTools(false);
+    try {
+      const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
+      expect(byName.create_expense_entry.inputSchema.required).toEqual(expect.arrayContaining([
+        "matter_id",
+        "allocation_matter_id",
+        "date",
+        "amount",
+        "expense_category_id",
+        "description",
+        "source_reference",
+        "billing_status",
+        "tax_setting",
+        "cost_type",
+      ]));
+      expect(byName.update_expense_entry.inputSchema.required).toEqual(expect.arrayContaining([
+        "activity_id",
+        "etag",
+        "allocation_matter_id",
+        "cost_type",
+      ]));
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("publishes exactly the approved solo-practice routine write surface", async () => {
     const routineWrites = [
       "create_contact", "update_contact", "create_matter", "update_matter",
       "create_task", "update_task", "complete_task", "create_note",
       "create_communication", "create_calendar_entry", "upload_document",
       "create_time_entry", "update_time_entry",
+      "create_expense_entry", "update_expense_entry",
     ];
     const { client, server, tools } = await discoverTools(true, routineWrites.join(","));
     try {

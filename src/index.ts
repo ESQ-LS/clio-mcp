@@ -30,6 +30,7 @@ async function main() {
         const { registerCalendarTools } = await import("./tools/calendar.js");
         const { registerActivityTools } = await import("./tools/activities.js");
         const { registerControlledTimeEntryTools } = await import("./tools/controlledTimeEntries.js");
+        const { registerControlledExpenseTools } = await import("./tools/controlledExpenses.js");
         const { registerBillingTools } = await import("./tools/billing.js");
         const { registerCommunicationTools } = await import("./tools/communications.js");
         const { registerNoteTools } = await import("./tools/notes.js");
@@ -48,6 +49,7 @@ async function main() {
         registerCalendarTools(server);
         registerActivityTools(server);
         registerControlledTimeEntryTools(server);
+        registerControlledExpenseTools(server);
         registerBillingTools(server);
         registerCommunicationTools(server);
         registerNoteTools(server);

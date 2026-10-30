@@ -17,14 +17,21 @@ import {
 } from "../esq/writePreview.js";
 import { CLIO_CREATE_TOOL_ANNOTATIONS, CLIO_READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 
-const DOCUMENT_LIST_FIELDS = "id,name,content_type,size,created_at,matter{id,display_number}";
+const DOCUMENT_LIST_FIELDS =
+  "id,name,content_type,size,created_at,matter{id,display_number},parent{id,type}," +
+  "latest_document_version{uuid,size,fully_uploaded}";
 
 const DOCUMENT_DETAIL_FIELDS =
-  "id,name,content_type,size,created_at,matter{id,display_number},latest_document_version{uuid,created_at,size}";
+  "id,name,content_type,size,created_at,matter{id,display_number},parent{id,type}," +
+  "latest_document_version{uuid,created_at,size,fully_uploaded}";
 
 const PART_SIZE = 10 * 1024 * 1024; // 10 MB — above S3's 5 MB minimum
 const MAX_PARTS_PER_REQUEST = 50;
 const MAX_DOCUMENT_SIZE = 5 * 1024 * 1024 * 1024;
+const MAX_DUPLICATE_SCAN_PAGES = 5;
+const FINALIZE_RETRY_DELAYS_MS = [250, 500, 1000];
+const PART_UPLOAD_RETRY_DELAYS_MS = [250, 500, 1000];
+const PART_UPLOAD_TIMEOUT_MS = 120_000;
 
 const MIME_MAP: Record<string, string> = {
   pdf: "application/pdf",
@@ -188,9 +195,91 @@ async function putPartToS3(
   }
   const hdrs: Record<string, string> = {};
   for (const h of headers) hdrs[h.name] = h.value;
-  const res = await fetch(putUrl, { method: "PUT", headers: hdrs, body: buf });
-  if (!res.ok) {
-    throw new Error(`S3 upload failed for part at offset ${offset}: HTTP ${res.status}`);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(putUrl, {
+        method: "PUT",
+        headers: hdrs,
+        body: buf,
+        signal: AbortSignal.timeout(PART_UPLOAD_TIMEOUT_MS),
+      });
+      if (res.ok) return;
+      const retryable = res.status === 408 || res.status === 429 || res.status >= 500;
+      if (!retryable || attempt >= PART_UPLOAD_RETRY_DELAYS_MS.length) {
+        throw new Error(`S3 upload failed for part at offset ${offset}: HTTP ${res.status}`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("S3 upload failed")) throw error;
+      if (attempt >= PART_UPLOAD_RETRY_DELAYS_MS.length) {
+        throw new Error(`S3 upload failed for part at offset ${offset} after retryable network errors.`);
+      }
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, PART_UPLOAD_RETRY_DELAYS_MS[attempt]));
+  }
+}
+
+async function findDuplicateDocument(matterId: number, name: string, size: number): Promise<any | null> {
+  let pageToken: string | null = null;
+  for (let page = 0; page < MAX_DUPLICATE_SCAN_PAGES; page++) {
+    const params: Record<string, string> = {
+      fields: DOCUMENT_LIST_FIELDS,
+      matter_id: String(matterId),
+      query: name,
+      limit: "200",
+    };
+    if (pageToken) params.page_token = pageToken;
+    const response = await clioGet("/documents.json", params);
+    const documents = Array.isArray(response?.data) ? response.data : [];
+    const duplicate = documents.find((document: any) =>
+      document.name === name &&
+      Number(document.size ?? document.latest_document_version?.size) === size &&
+      document.matter?.id === matterId,
+    );
+    if (duplicate) return duplicate;
+    pageToken = extractNextPageToken(response?.meta);
+    if (!pageToken) return null;
+  }
+  throw new Error("Duplicate screening exceeded 1,000 matching documents; use a more specific document name.");
+}
+
+async function finalizeDocumentUpload(documentId: number, uuid: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await clioPatch(`/documents/${documentId}.json?fields=id,latest_document_version{fully_uploaded}`, {
+        data: { uuid, fully_uploaded: true },
+      });
+      return;
+    } catch (error) {
+      const retryable = error instanceof ClioApiError && error.errorType === "UploadTimeoutError";
+      if (!retryable || attempt >= FINALIZE_RETRY_DELAYS_MS.length) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, FINALIZE_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
+function assertUploadedDocument(
+  document: any,
+  expected: {
+    documentId: number;
+    matterId: number;
+    parent: { id: number; type: "Matter" | "Folder" };
+    name: string;
+    size: number;
+    uuid: string;
+  },
+): void {
+  if (!document || document.id !== expected.documentId) {
+    throw new Error("Clio document read-back failed after upload.");
+  }
+  if (document.matter?.id !== expected.matterId || document.parent?.type !== expected.parent.type ||
+      document.parent?.id !== expected.parent.id) {
+    throw new Error("Clio document read-back did not confirm the target matter and parent association.");
+  }
+  if (document.name !== expected.name ||
+      Number(document.size ?? document.latest_document_version?.size) !== expected.size ||
+      document.latest_document_version?.uuid !== expected.uuid ||
+      document.latest_document_version?.fully_uploaded !== true) {
+    throw new Error("Clio document read-back did not confirm the uploaded file metadata.");
   }
 }
 
@@ -319,6 +408,7 @@ export function registerDocumentTools(server: McpServer): void {
       inputSchema: {
         file_path: z.string().describe("Absolute path to the local file to upload"),
         matter_id: z.number().int().positive().describe("Clio matter ID to attach the document to"),
+        folder_id: z.number().int().positive().optional().describe("Optional Clio folder ID that must belong to matter_id"),
         name: z.string().optional().describe("Document name in Clio; defaults to the file's basename"),
         content_type: z.string().optional().describe("MIME type; auto-detected from extension if omitted"),
         confirm_write: z.boolean().default(false),
@@ -326,7 +416,7 @@ export function registerDocumentTools(server: McpServer): void {
       },
       annotations: CLIO_CREATE_TOOL_ANNOTATIONS,
     },
-    async ({ file_path, matter_id, name, content_type, confirm_write, preview_token }) => {
+    async ({ file_path, matter_id, folder_id, name, content_type, confirm_write, preview_token }) => {
       let writeAttempted = false;
       let snapshot: UploadSnapshot | undefined;
       try {
@@ -336,12 +426,43 @@ export function registerDocumentTools(server: McpServer): void {
         const docName = name
           ? (path.extname(name) ? name : name + originalExt)
           : path.basename(file_path);
+        if (!docName.trim() || docName.length > 255 || /[\0\r\n/\\]/.test(docName)) {
+          throw new Error("Document name must be 1-255 characters and cannot contain path separators or control characters.");
+        }
         const mime = content_type ?? guessMime(docName);
         const sha256 = snapshot.sha256;
         const matterResponse = await clioGet(`/matters/${matter_id}.json`, {
-          fields: "id,display_number,description,status",
+          fields: "id,display_number,description,status,redacted",
         });
         if (matterResponse?.data?.id !== matter_id) throw new Error("Matter validation failed.");
+        if (matterResponse.data.redacted === true) {
+          throw new Error("Matter validation failed because the authenticated user cannot access the full matter.");
+        }
+        if (String(matterResponse.data.status ?? "").toLowerCase() === "closed") {
+          throw new Error("Closed matters cannot receive document uploads.");
+        }
+        let targetParent: { id: number; type: "Matter" | "Folder"; name?: string } = {
+          id: matter_id,
+          type: "Matter",
+        };
+        if (folder_id !== undefined) {
+          const folderResponse = await clioGet(`/folders/${folder_id}.json`, {
+            fields: "id,name,type,locked,matter{id,display_number,redacted}",
+          });
+          const folder = folderResponse?.data;
+          if (!folder || folder.id !== folder_id || folder.type !== "Folder") {
+            throw new Error("Document-folder validation failed.");
+          }
+          if (folder.locked === true) throw new Error("Locked folders cannot receive document uploads.");
+          if (folder.matter?.id !== matter_id || folder.matter?.redacted === true) {
+            throw new Error("Document-folder validation failed because the folder is not accessible within the target matter.");
+          }
+          targetParent = { id: folder_id, type: "Folder", name: folder.name };
+        }
+        const duplicate = await findDuplicateDocument(matter_id, docName, totalSize);
+        if (duplicate) {
+          throw new Error(`Duplicate document rejected; matching document ${duplicate.id} already exists.`);
+        }
         const proposal = {
           matter: {
             id: matter_id,
@@ -349,6 +470,7 @@ export function registerDocumentTools(server: McpServer): void {
             description: matterResponse.data.description,
             status: matterResponse.data.status,
           },
+          parent: targetParent,
           document: { name: docName, content_type: mime, size: totalSize, sha256 },
         };
 
@@ -356,7 +478,7 @@ export function registerDocumentTools(server: McpServer): void {
           const auditOk = await appendAuditLog({
             tool: "upload_document", action: "create", confirmation_state: "dry_run",
             outcome: "success", matter_id,
-            args: { confirm_write: false, matter_id, size: totalSize },
+            args: { confirm_write: false, matter_id, folder_id, size: totalSize },
           });
           if (!auditOk) throw new Error("Audit persistence failed; dry-run could not be recorded.");
           return writeJsonResult(writePreviewEnvelope(
@@ -366,10 +488,14 @@ export function registerDocumentTools(server: McpServer): void {
 
         if (!preview_token) throw new Error("preview_token is required when confirm_write is true.");
         await consumeWritePreviewToken(preview_token, "upload_document", proposal);
+        const duplicateAtWrite = await findDuplicateDocument(matter_id, docName, totalSize);
+        if (duplicateAtWrite) {
+          throw new Error(`Duplicate document rejected; matching document ${duplicateAtWrite.id} appeared after preview.`);
+        }
         const preWriteAuditOk = await appendAuditLog({
           tool: "upload_document", action: "create", confirmation_state: "confirmed",
           outcome: "attempt", matter_id,
-          args: { confirm_write: true, matter_id, size: totalSize },
+          args: { confirm_write: true, matter_id, folder_id, size: totalSize },
         });
         if (!preWriteAuditOk) throw new Error("Audit persistence failed; no Clio upload was attempted.");
         writeAttempted = true;
@@ -392,7 +518,7 @@ export function registerDocumentTools(server: McpServer): void {
           {
             data: {
               name: docName,
-              parent: { id: matter_id, type: "Matter" },
+              parent: { id: targetParent.id, type: targetParent.type },
               content_type: mime,
               multiparts: firstBatch.map(({ part_number, content_length, content_md5 }) => ({
                 part_number, content_length, content_md5,
@@ -434,15 +560,22 @@ export function registerDocumentTools(server: McpServer): void {
           batchStart += MAX_PARTS_PER_REQUEST;
         }
 
-        await clioPatch(`/documents/${docId}.json?fields=id,latest_document_version{fully_uploaded}`, {
-          data: { uuid, fully_uploaded: true },
+        await finalizeDocumentUpload(docId, uuid);
+        const readBack = await clioGet(`/documents/${docId}.json`, { fields: DOCUMENT_DETAIL_FIELDS });
+        assertUploadedDocument(readBack?.data, {
+          documentId: docId,
+          matterId: matter_id,
+          parent: { id: targetParent.id, type: targetParent.type },
+          name: docName,
+          size: totalSize,
+          uuid,
         });
 
         const auditOk = await appendAuditLog({
           tool: "upload_document",
           action: "create",
           confirmation_state: "confirmed",
-          args: { confirm_write: true, matter_id, size: totalSize },
+          args: { confirm_write: true, matter_id, folder_id, size: totalSize },
           outcome: "success",
           matter_id,
           record_id: docId,
@@ -456,6 +589,9 @@ export function registerDocumentTools(server: McpServer): void {
               name: docName,
               uuid,
               parts: allParts.length,
+              target_matter_verified: true,
+              target_parent: { id: targetParent.id, type: targetParent.type },
+              fully_uploaded: true,
               audit_recorded: auditOk,
             }, null, 2),
           }],
@@ -466,7 +602,7 @@ export function registerDocumentTools(server: McpServer): void {
           tool: "upload_document",
           action: "create",
           confirmation_state: confirm_write ? "confirmed" : "dry_run",
-          args: { confirm_write, matter_id },
+          args: { confirm_write, matter_id, folder_id },
           outcome: "error",
           error_message: message,
           matter_id,
