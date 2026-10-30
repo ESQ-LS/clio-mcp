@@ -577,7 +577,7 @@ export function registerControlledExpenseTools(server: McpServer): void {
           source_reference: candidate.source_reference,
           billing_status: candidate.billing_status,
           tax_setting: resolvedTaxSettings ? null : candidate.tax_setting,
-          tax_settings: resolvedTaxSettings ?? current.tax_settings ?? [],
+          tax_settings: resolvedTaxSettings ?? (tax_setting !== undefined ? [] : current.tax_settings ?? []),
           cost_type,
           fields_changed: fieldsChanged,
         };

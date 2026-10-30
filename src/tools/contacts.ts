@@ -296,6 +296,17 @@ function validatePluralContactEntries(
 ): Array<Record<string, unknown>> {
   assertUniqueNestedIds(changes, kind);
   assertAssociationLimit(currentEntries, changes, kind);
+  if (
+    kind === "email" &&
+    currentEntries.some((entry) => entry?.default_email === true) &&
+    (changes as Array<Record<string, unknown>>).some(
+      (entry) => entry.id === undefined && entry.default_email === true,
+    )
+  ) {
+    throw new Error(
+      "A new default email cannot be added while the contact already has a default email; update the existing default email by ID.",
+    );
+  }
   return (changes as Array<Record<string, unknown>>).map((entryChanges) => {
     const id = entryChanges.id as number | undefined;
     if (id === undefined) return { name: "Work", ...entryChanges };

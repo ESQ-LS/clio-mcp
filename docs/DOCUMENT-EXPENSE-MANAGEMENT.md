@@ -61,7 +61,10 @@ Required business fields:
 - `description`
 - single-line `source_reference`
 - `billing_status`: `billable`, `non_billable`, or `no_charge`
-- `tax_setting`: `no_tax`, `tax_1_only`, `tax_2_only`, or `tax_1_and_tax_2`
+- `tax_setting`: `no_tax`
+- optional `tax_settings`: one or two explicit entries, each containing a
+  `tax_rate_configuration_id`, unique `order` (`1` or `2`), and `rule`
+  (`Pre`, `Post`, or `Compound`)
 - `cost_type`: `client_recoverable_direct_cost`,
   `third_party_fee_recovery`, or `internal_non_billable_cost`
 
@@ -80,7 +83,9 @@ Required control fields: `activity_id`, current `etag`,
 `allocation_matter_id`, `cost_type`, `confirm_write`, and (for confirmation) the
 unchanged `preview_token`. At least one editable field is required: `date`,
 `amount`, `expense_category_id`, `description`, `source_reference`,
-`billing_status`, or `tax_setting`.
+`billing_status`, `tax_setting`, or `tax_settings`. Use `tax_setting: no_tax`
+to clear taxes, or supply `tax_settings` to apply explicit tax-rate
+configurations whose identity and rate are bound into the signed preview.
 
 The tool rejects non-expense, billed, on-bill, stale-ETag, and cross-matter
 updates. `If-Match` supplies optimistic concurrency to Clio.
@@ -147,9 +152,9 @@ unchanged and adds:
   `SoftCostEntry`.
 - Billable expenses on matters requiring mandatory UTBMS expense codes are
   refused because this schema does not accept `utbms_expense`.
-- The legacy `tax_setting` field is supported. Clio's newer explicit
-  multi-tax `tax_settings` array is not yet exposed; use a bounded follow-up
-  change if the firm's account requires named tax-rate configurations.
+- The legacy `tax_setting` field is accepted only as `no_tax`. Taxed expenses
+  use the explicit `tax_settings` array so the selected Clio rate
+  configurations are validated and bound into the signed preview.
 - Duplicate screening is defensive, not a database uniqueness constraint. An
   ambiguous network failure must be reconciled by reading Clio before retrying.
 - The upload duplicate key is exact filename plus byte size in the matter; Clio

@@ -416,6 +416,19 @@ describe("update_expense_entry", () => {
     expect(preview.proposal).toMatchObject({ amount: 150, quantity: 2, total: 300 });
   });
 
+  it("clears stale explicit tax settings when previewing no_tax", async () => {
+    installReads({
+      ...CURRENT,
+      tax_setting: null,
+      tax_settings: [{ tax_rate_configuration: { id: 901 }, order: 1, rule: "Pre" }],
+    });
+    const preview = JSON.parse((await buildHandlers().update_expense_entry({
+      ...UPDATE_ARGS,
+      tax_setting: "no_tax",
+    })).content[0].text);
+    expect(preview.proposal).toMatchObject({ tax_setting: "no_tax", tax_settings: [] });
+  });
+
   it("rejects stale ETags, billed entries, and cross-matter allocation", async () => {
     installReads({ ...CURRENT, etag: '"new-etag"' });
     const stale = await buildHandlers().update_expense_entry(UPDATE_ARGS);

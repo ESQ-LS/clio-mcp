@@ -487,7 +487,7 @@ describe("controlled document upload", () => {
     vi.unstubAllGlobals();
   });
 
-  it("does not replace a successful upload result when snapshot cleanup fails", async () => {
+  it("surfaces snapshot cleanup failure and releases reserved capacity", async () => {
     const filePath = path.join(tempDir, "synthetic.txt");
     await fs.writeFile(filePath, "approved bytes");
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
@@ -500,17 +500,17 @@ describe("controlled document upload", () => {
     const args = { file_path: filePath, matter_id: 99 };
     const preview = JSON.parse((await handlers.upload_document(args)).content[0].text);
     const originalRm = fs.rm.bind(fs);
-    const rmSpy = vi.spyOn(fs, "rm").mockImplementationOnce(async (...rmArgs) => {
-      await originalRm(...rmArgs);
-      throw new Error("synthetic cleanup failure");
-    }).mockImplementation(originalRm);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const rmSpy = vi.spyOn(fs, "rm").mockRejectedValue(new Error("synthetic cleanup failure"));
     const result = await handlers.upload_document({ ...args, confirm_write: true, preview_token: preview.preview_token });
-    expect(result.isError).not.toBe(true);
-    expect(JSON.parse(result.content[0].text)).toMatchObject({ document_id: 7, uuid: "synthetic-version" });
-    expect(errorSpy).toHaveBeenCalledWith("[esq] Failed to remove a temporary Clio upload snapshot.");
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      error: expect.stringContaining("cleanup failed"),
+      write_performed: "unknown",
+    });
+    expect(rmSpy).toHaveBeenCalledTimes(2);
+    const leakedSnapshotDir = rmSpy.mock.calls[0][0] as string;
     rmSpy.mockRestore();
-    errorSpy.mockRestore();
+    await originalRm(leakedSnapshotDir, { recursive: true, force: true });
     vi.unstubAllGlobals();
   });
 

@@ -58,16 +58,22 @@ async function removeUploadSnapshot(
   releaseCapacity: (() => void) | undefined,
 ): Promise<void> {
   try {
-    await fs.rm(snapshotDir, { recursive: true, force: true });
-  } catch (error) {
-    try {
-      await fs.stat(snapshotDir);
-    } catch (statError) {
-      if ((statError as NodeJS.ErrnoException).code === "ENOENT") releaseCapacity?.();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await fs.rm(snapshotDir, { recursive: true, force: true });
+        return;
+      } catch {
+        try {
+          await fs.stat(snapshotDir);
+        } catch (statError) {
+          if ((statError as NodeJS.ErrnoException).code === "ENOENT") return;
+        }
+      }
     }
-    throw error;
+    throw new Error("Temporary upload snapshot cleanup failed.");
+  } finally {
+    releaseCapacity?.();
   }
-  releaseCapacity?.();
 }
 const MAX_DUPLICATE_SCAN_PAGES = 5;
 const FINALIZE_RETRY_DELAYS_MS = [250, 500, 1000];
@@ -672,7 +678,23 @@ export function registerDocumentTools(server: McpServer): void {
         try {
           await snapshot?.cleanup();
         } catch {
-          console.error("[esq] Failed to remove a temporary Clio upload snapshot.");
+          const message = "Temporary upload snapshot cleanup failed; reconcile server temporary storage before retrying.";
+          await appendAuditLog({
+            tool: "upload_document",
+            action: "cleanup",
+            confirmation_state: confirm_write ? "confirmed" : "dry_run",
+            args: { confirm_write, matter_id, folder_id },
+            outcome: "error",
+            error_message: message,
+            matter_id,
+          });
+          return writeJsonResult({
+            error: message,
+            write_performed: writeAttempted ? "unknown" : false,
+            ...(writeAttempted && {
+              recovery: "Search the target Clio matter for the proposed document and reconcile server temporary storage before retrying.",
+            }),
+          }, true);
         }
       }
     }

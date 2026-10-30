@@ -405,6 +405,20 @@ describe("controlled contact writes", () => {
     expect(mockClioPatch).not.toHaveBeenCalled();
   });
 
+  it("rejects adding a second default email without demoting the existing default", async () => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",
+      email_addresses: [{ id: 11, name: "Work", address: "old@example.test", default_email: true }],
+    } });
+    const result = await getHandlers().update_contact({
+      contact_id: 42,
+      email_addresses: [{ name: "Home", address: "new@example.test", default_email: true }],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("already has a default email");
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicate IDs in every plural contact association", async () => {
     mockClioGet.mockResolvedValue({ data: {
       id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",
