@@ -214,6 +214,13 @@ describe("controlled document upload", () => {
     const confirmed = await handlers.upload_document({ ...args, confirm_write: true, preview_token: preview.preview_token });
     expect(confirmed.isError).not.toBe(true);
     expect(Buffer.concat(uploaded).toString()).toBe("approved bytes");
+    expect(mockClioPatch).toHaveBeenCalledWith(
+      "/documents/7.json?fields=id,latest_document_version{fully_uploaded}",
+      { data: { uuid: "synthetic-version", fully_uploaded: true } },
+    );
+    expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      tool: "upload_document", outcome: "success", record_id: 7,
+    }));
     vi.unstubAllGlobals();
   });
 

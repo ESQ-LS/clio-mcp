@@ -69,6 +69,7 @@ export function registerNoteTools(server: McpServer): void {
           args: { confirm_write: true, matter_id },
           outcome: "success",
           matter_id,
+          record_id: note.id,
         });
 
         return {

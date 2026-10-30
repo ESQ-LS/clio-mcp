@@ -153,6 +153,7 @@ export function registerTaskTools(server: McpServer): void {
           args: { confirm_write: true, matter_id, priority, due_date, assignee_id },
           outcome: "success",
           matter_id,
+          record_id: task.id,
         });
 
         return {

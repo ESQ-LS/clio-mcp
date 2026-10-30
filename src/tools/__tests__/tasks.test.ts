@@ -57,6 +57,9 @@ describe("controlled task writes", () => {
     const audit = JSON.stringify(mockAppendAuditLog.mock.calls);
     expect(audit).not.toContain(args.name);
     expect(audit).not.toContain(args.description);
+    expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      tool: "create_task", outcome: "success", record_id: 1,
+    }));
   });
 
   it("previews and conditionally updates a task", async () => {

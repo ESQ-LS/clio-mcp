@@ -435,7 +435,7 @@ export function registerDocumentTools(server: McpServer): void {
         }
 
         await clioPatch(`/documents/${docId}.json?fields=id,latest_document_version{fully_uploaded}`, {
-          data: { uuid, fully_uploaded: "true" },
+          data: { uuid, fully_uploaded: true },
         });
 
         const auditOk = await appendAuditLog({
@@ -445,6 +445,7 @@ export function registerDocumentTools(server: McpServer): void {
           args: { confirm_write: true, matter_id, size: totalSize },
           outcome: "success",
           matter_id,
+          record_id: docId,
         });
 
         return {

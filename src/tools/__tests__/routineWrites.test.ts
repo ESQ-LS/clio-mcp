@@ -44,6 +44,9 @@ describe("routine preview-controlled writes", () => {
     expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       tool: "create_note", confirmation_state: "confirmed", outcome: "attempt",
     }));
+    expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      tool: "create_note", outcome: "success", record_id: 7,
+    }));
   });
 
   it("reports a failed final audit after a successful note write", async () => {
@@ -93,6 +96,9 @@ describe("routine preview-controlled writes", () => {
     expect(mockClioGet).toHaveBeenCalledWith("/calendars.json", {
       "ids[]": "1", writeable: "true", fields: "id,name,type", limit: "1",
     });
+    expect(mockAppendAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      tool: "create_calendar_entry", outcome: "success", record_id: 8,
+    }));
     expect(JSON.stringify(mockAppendAuditLog.mock.calls)).not.toContain(args.summary);
   });
 
