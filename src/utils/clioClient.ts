@@ -9,7 +9,11 @@ async function resolveAccessToken(): Promise<string> {
 }
 
 export class ClioApiError extends Error {
-  constructor(public readonly statusCode: number, message: string) {
+  constructor(
+    public readonly statusCode: number,
+    message: string,
+    public readonly errorType?: string,
+  ) {
     super(message);
     this.name = "ClioApiError";
   }
@@ -46,6 +50,7 @@ async function clioFetch(url: string, init: RequestInit): Promise<Response> {
     if (!res.ok) {
       const raw = await res.text();
       let msg = raw;
+      let errorType: string | undefined;
       try {
         const json = JSON.parse(raw);
         if (typeof json.message === "string") {
@@ -53,6 +58,7 @@ async function clioFetch(url: string, init: RequestInit): Promise<Response> {
         } else if (typeof json.error === "string") {
           msg = json.error;
         } else if (json.error && typeof json.error === "object") {
+          if (typeof json.error.type === "string") errorType = json.error.type;
           msg = json.error.message ?? JSON.stringify(json.error);
         } else if (Array.isArray(json.errors)) {
           msg = json.errors.map((e: any) => (typeof e === "string" ? e : e.message ?? JSON.stringify(e))).join("; ");
@@ -60,7 +66,7 @@ async function clioFetch(url: string, init: RequestInit): Promise<Response> {
           msg = JSON.stringify(json);
         }
       } catch { /* use raw text */ }
-      throw new ClioApiError(res.status, `Clio API error ${res.status} on ${url}: ${msg}`);
+      throw new ClioApiError(res.status, `Clio API error ${res.status} on ${url}: ${msg}`, errorType);
     }
     return res;
   }

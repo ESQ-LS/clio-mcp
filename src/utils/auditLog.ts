@@ -13,6 +13,7 @@ const AUDIT_FILE = path.join(AUDIT_DIR, "audit.log");
 const REDACTED_KEYS = new Set([
   "access_token", "refresh_token", "client_secret", "password", "token", "encryption_key",
   "note", "narrative", "description", "supporting_evidence", "evidence",
+  "source_reference", "supplier_invoice", "invoice_number",
 ]);
 
 function detectMachineIp(): string | undefined {
@@ -30,7 +31,7 @@ export interface AuditEntry {
   machine_ip?: string;
   tool: string;
   args: Record<string, unknown>;
-  outcome: "success" | "error" | "not_found";
+  outcome: "attempt" | "success" | "error" | "not_found";
   error_message?: string;
   clio_user_id?: string;
   matter_id?: number;

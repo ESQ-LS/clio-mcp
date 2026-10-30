@@ -52,7 +52,7 @@ ABA Opinion 512 (2023) requires attorneys using AI tools to understand how those
 
 - **No data retention by the connector.** The connector does not store matter data, client names, or any Clio content. It fetches from the API and passes results to Claude. The only thing persisted locally is your authentication token, and that is encrypted (see below).
 
-- **Scope limited to tasks, notes, and document uploads.** The connector can create tasks and notes on matters, and upload documents to matters. It cannot create, edit, or delete matters, contacts, calendar entries, or billing records. This is a deliberate v1 design choice — write access is limited to the operations most useful for AI-assisted legal work while minimising liability.
+- **Solo-practice write controls.** Routine contact, matter, task, note, communication, calendar, document, and time-entry writes can be enabled individually. Each production-capable ESQ write is dry-run first and requires an unchanged, short-lived confirmation token. Deletion, trust transfers, permission changes, and bulk mutation are not exposed.
 
 ### Token security — encryption at rest
 
@@ -186,7 +186,7 @@ The connector retrieves live data from Clio on every request. Nothing is cached 
 
 Before you begin, make sure you have:
 
-- **Node.js 18 or later** — [nodejs.org/en/download](https://nodejs.org/en/download)
+- **Node.js 22.12 or later** — [nodejs.org/en/download](https://nodejs.org/en/download)
 - **Claude Desktop** — [claude.ai/download](https://claude.ai/download)
 - **A Clio account** with permission to create developer applications (ask your Clio administrator if you are unsure)
 
@@ -264,6 +264,7 @@ Start the connector as a long-running server. In a terminal, from the `clio-mcp`
 
 ```bash
 TRANSPORT=http MCP_BASE_URL=http://127.0.0.1:3000 \
+MCP_API_KEY=replace_with_a_long_random_secret \
 CLIO_CLIENT_ID=your_client_id CLIO_CLIENT_SECRET=your_client_secret \
 node build/index.js
 ```
@@ -275,13 +276,19 @@ Then point Claude Desktop at it via the [`mcp-remote`](https://www.npmjs.com/pac
   "mcpServers": {
     "clio": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://127.0.0.1:3000/mcp"]
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:3000/mcp", "--header", "Authorization:${CLIO_MCP_AUTH_HEADER}"],
+      "env": {
+        "CLIO_MCP_AUTH_HEADER": "Bearer replace_with_a_long_random_secret"
+      }
     }
   }
 }
 ```
 
-If you set `MCP_API_KEY` on the server, pass it as a header from `mcp-remote` (`--header "Authorization: Bearer <key>"`).
+HTTP mode requires `MCP_API_KEY`. Pass the same value through `mcp-remote`'s
+environment interpolation as shown above so the key is not exposed in process
+arguments. The health endpoint and OAuth browser
+callback remain public; every MCP tool request is authenticated.
 
 ---
 
@@ -339,20 +346,32 @@ Claude selects and calls these tools automatically based on your questions. You 
 | `auth_status` | Shows whether you are currently authenticated and when your session expires |
 | `logout` | Clears your stored credentials from this machine |
 
-### Matters (3 tools)
+### Matters (4 tools)
 
 | Tool | Inputs | What it does |
 |---|---|---|
 | `list_matters` | `status` (open/pending/closed), `limit` | Lists matters with optional status filter |
 | `get_matter` | `matter_id` | Returns full detail for a specific matter |
-| `create_matter` | `client_id`, `description`, `status`, `open_date`, `practice_area_id`, `billable`, `responsible_attorney_id`, `originating_attorney_id`, `client_reference` | Creates a new matter; status defaults to Open, billable defaults to true |
+| `create_matter` | `client_id`, `description`, `status`, `open_date`, `practice_area_id`, `billable`, `responsible_attorney_id`, `originating_attorney_id`, `client_reference`, `confirm_write`, `preview_token` | Dry-runs and validates a new matter; status defaults to Pending for intake and confirmation requires the preview token |
+| `update_matter` | `matter_id`, editable matter fields, `confirm_write`, `preview_token` | Dry-runs exact changes and invalidates the preview if the matter changes before confirmation |
 
-### Contacts (2 tools)
+### Contacts (4 tools)
 
 | Tool | Inputs | What it does |
 |---|---|---|
 | `search_contacts` | `query`, `limit`, `page_token` | Searches contacts by name, email, or company; returns a paginated envelope with `total_count`, `has_more`, and `next_page_token` — pass the token back to fetch the next page |
 | `get_contact` | `contact_id` | Returns full detail for one exact contact, including emails, phone numbers, addresses, and custom-field definition IDs, names, types, and values |
+| `create_contact` | person/company details, `confirm_write`, `preview_token` | Dry-runs a new contact, displays possible duplicates, and requires the preview token to write |
+| `update_contact` | `contact_id`, editable contact fields, `confirm_write`, `preview_token` | Dry-runs exact changes and invalidates the preview if the contact changes before confirmation |
+
+The intake project is tracked in [CLIENT-INTAKE-PROJECT.md](docs/CLIENT-INTAKE-PROJECT.md).
+Contact and matter updates use the current Clio ETag in `If-Match` so concurrent
+edits cannot silently overwrite changes. Contact email, phone, and address changes
+reuse existing entry IDs. When there are multiple candidates, supply `email_id`,
+`phone_id`, or `address_id` from `get_contact`; omitted address fields are preserved.
+If no entry exists, a Work entry is added. Tokens are bound to the authenticated
+Clio user, API region, and server process; preview again after a restart or replica
+change. All four tools remain gated by `ESQ_WRITE_TOOLS`.
 
 ### Documents (3 tools)
 
@@ -360,16 +379,16 @@ Claude selects and calls these tools automatically based on your questions. You 
 |---|---|---|
 | `list_documents` | `matter_id`, `parent_id`, `query`, `limit`, `page_token` | Lists or full-text searches documents; at least one of `matter_id`, `parent_id`, or `query` is required; returns a paginated envelope with `total_count`, `has_more`, and `next_page_token` |
 | `get_document` | `document_id` | Returns document metadata and a direct download URL |
-| `upload_document` | `file_path`, `matter_id`, `name`, `content_type` | Uploads a local file to a matter using Clio's multipart S3 upload flow |
+| `upload_document` | `file_path`, `matter_id`, optional `folder_id`/name/type, `confirm_write`, `preview_token` | Rejects empty/out-of-root files and same-name/same-size duplicates, validates an optional folder within the matter, previews the exact SHA-256, uploads through Clio's multipart flow with bounded part retries, retries verification timeouts, and reads the document back to confirm the matter and parent association |
 
 ### Tasks (4 tools)
 
 | Tool | Inputs | What it does |
 |---|---|---|
 | `list_tasks` | `matter_id`, `status` (Pending/Complete/In Progress/In Review/Draft), `due_date_start`, `due_date_end`, `limit` | Lists tasks with optional filters |
-| `create_task` | `matter_id`, `name`, `description`, `priority` (High/Normal/Low), `due_date`, `assignee_id` | Creates a task on a matter; priority defaults to Normal |
-| `update_task` | `task_id`, `name`, `description`, `priority`, `due_date`, `status`, `assignee_id` | Updates one or more fields on an existing task |
-| `complete_task` | `task_id` | Marks a task as complete |
+| `create_task` | task fields, `confirm_write`, `preview_token` | Validates the matter and assignee, then previews and creates a task |
+| `update_task` | task fields, `confirm_write`, `preview_token` | Previews exact changes and uses the current task ETag with `If-Match` |
+| `complete_task` | `task_id`, `confirm_write`, `preview_token` | Previews the exact task and matter, then conditionally marks it complete |
 
 ### Calendar (3 tools)
 
@@ -377,7 +396,7 @@ Claude selects and calls these tools automatically based on your questions. You 
 |---|---|---|
 | `list_calendars` | none | Lists calendars the user can write to; use the returned `id` as `calendar_owner_id` when creating entries |
 | `list_calendar_entries` | `from`, `to` | Lists calendar entries within a date range (YYYY-MM-DD or YYYY-MM-DDTHH:MM) |
-| `create_calendar_entry` | `summary`, `start_at`, `end_at`, `calendar_owner_id`, `description`, `all_day`, `matter_id`, `location`, `send_email_notification`, `attendee_ids` | Creates a calendar entry (hearing, deadline, meeting); `start_at`/`end_at` accept date or datetime |
+| `create_calendar_entry` | event fields, `confirm_write`, `preview_token` | Validates calendar, matter, and attendees and previews any email notification before creation |
 
 ### Time entries (3 tools)
 
@@ -387,15 +406,41 @@ Claude selects and calls these tools automatically based on your questions. You 
 | `log_time_entry` | `matter_id`, `date`, `quantity_in_hours`, `note`, `price`, `non_billable`, `no_charge`, `activity_description_id`, `user_id` | Creates a new billable (or non-billable) time entry on a matter |
 | `create_activity` | `type`, `date`, `matter_id`, `note`, `quantity_in_hours`, `price`, `non_billable`, `no_charge`, `activity_description_id`, `user_id`, `reference`, `tax_setting` | Creates any Clio activity type — TimeEntry, ExpenseEntry, HardCostEntry, or SoftCostEntry |
 
-### ESQ controlled time-entry writes
+### Expense entries (4 tools)
+
+| Tool | Inputs | What it does |
+|---|---|---|
+| `list_expense_entries` | matter/category/date/status filters, `limit`, `page_token` | Lists only Clio `ExpenseEntry` activities with ETags, billing state, category, tax fields, and cursor pagination |
+| `get_expense_entry` | `activity_id` | Retrieves one exact `ExpenseEntry` and its current ETag |
+| `create_expense_entry` | matter/allocation, date, amount, category, description, source reference, billing/tax/cost classification, confirmation fields | Validates the matter and category, rejects cross-matter allocations and duplicates, then dry-runs before any write |
+| `update_expense_entry` | `activity_id`, `etag`, allocation and editable fields, confirmation fields | Updates only an unbilled `ExpenseEntry`, preserves its matter, repeats duplicate checks, and uses `If-Match` |
+
+The controlled expense tools intentionally create only Clio `ExpenseEntry`
+activities. They do not parse supplier invoices, decide whether a cost is
+recoverable, create hard/soft-cost records, or support mandatory UTBMS expense
+codes. See [DOCUMENT-EXPENSE-MANAGEMENT.md](docs/DOCUMENT-EXPENSE-MANAGEMENT.md)
+for schemas, examples, permissions, limitations, deployment, and acceptance.
+
+### ESQ controlled writes
 
 The ESQ production fork is read-only unless a write tool is explicitly named in
-`ESQ_WRITE_TOOLS`. It exposes `create_time_entry` and `update_time_entry` only
-when both names are allowlisted. Each tool is dry-run by default and requires a
+`ESQ_WRITE_TOOLS`. Enable only the named routine tools required for the deployed
+workflow. Each controlled tool is dry-run by default and requires a
 second, unchanged call with `confirm_write: true` and the short-lived,
-single-use `preview_token` returned by the dry run. Updates require the current
-Activity ID and ETag, use `If-Match`, and reject billed or invoiced entries.
-Deletion is not implemented. Broad legacy write handlers remain withheld.
+single-use `preview_token` returned by the dry run. Controlled time- and
+expense-entry updates require the current Activity ID and ETag, use `If-Match`,
+and reject billed or invoiced entries. Contact, matter, and task updates accept
+their resource ID, read the current ETag before preview, and use that ETag with
+`If-Match` on confirmation.
+Deletion, trust transfers, permission changes, and bulk mutation are not implemented.
+
+Document uploads additionally require `ESQ_CLIO_UPLOAD_ROOT` to be an absolute,
+operator-approved staging directory. Uploads outside its resolved path and
+symbolic-link inputs are rejected. Empty files and same-name/same-size duplicates
+are rejected. Successful uploads are read back from Clio to verify the exact
+matter association and fully-uploaded metadata. Matter lifecycle defaults use
+`ESQ_FIRM_TIMEZONE` (default `America/Toronto`) rather than the container's UTC
+calendar date.
 
 ### Billing (1 tool)
 
@@ -407,7 +452,14 @@ Deletion is not implemented. Broad legacy write handlers remain withheld.
 
 | Tool | Inputs | What it does |
 |---|---|---|
-| `create_note` | `matter_id`, `subject`, `body` | Creates a note on a matter; appears in Clio's matter timeline |
+| `create_note` | note fields, `confirm_write`, `preview_token` | Validates the target matter and previews the full note before creation |
+
+### Communications (2 tools)
+
+| Tool | Inputs | What it does |
+|---|---|---|
+| `list_communications` | matter/search/pagination fields | Lists logged calls, emails, and secure messages |
+| `create_communication` | communication fields, `confirm_write`, `preview_token` | Validates every referenced record and logs a phone or email communication; it does not send an external message |
 
 ### Users (2 tools)
 
@@ -446,7 +498,7 @@ All settings are passed as environment variables (in your Claude Desktop config 
 | `TRANSPORT` | No | `http` | `stdio` or `http`. Defaults to `http` at v2.0.0; set to `stdio` for the pre-v2 behavior |
 | `MCP_BASE_URL` | HTTP mode | — | Public base URL of this server (e.g. `http://127.0.0.1:3000`). Used for the OAuth redirect |
 | `PORT` | No | `3000` | HTTP listen port (HTTP mode only) |
-| `MCP_API_KEY` | No | — | If set, the HTTP server requires this bearer token in the `Authorization` header. Recommended for any non-localhost deployment |
+| `MCP_API_KEY` | HTTP mode | — | Bearer token required for every MCP tool request, including read-only tools. HTTP startup fails if it is absent. |
 | `ENCRYPTION_KEY` | No | auto-generated | Overrides OS keychain. Required only for CI/headless installs where no keychain is available. Must be a 64-character hex string. |
 | `CLIO_REDIRECT_PORT` | No | `5678` | Local port for the OAuth callback (stdio mode). Change if 5678 is in use on your machine |
 | `CLIO_REGION` | No | `us` | `us`, `ca`, `eu`, or `au`. Controls the default Clio API and auth base URLs |

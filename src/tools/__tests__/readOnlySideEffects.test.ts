@@ -63,6 +63,7 @@ import { registerCalendarTools } from "../calendar.js";
 import { registerCommunicationTools } from "../communications.js";
 import { registerContactTools } from "../contacts.js";
 import { registerDocumentTools } from "../documents.js";
+import { registerControlledExpenseTools } from "../controlledExpenses.js";
 import { registerMatterTools } from "../matters.js";
 import { registerTaskTools } from "../tasks.js";
 import { registerUserTools } from "../users.js";
@@ -88,6 +89,7 @@ function buildReadHandlers(): Record<string, Handler> {
   registerMatterTools(server as any);
   registerContactTools(server as any);
   registerDocumentTools(server as any);
+  registerControlledExpenseTools(server as any);
   registerTaskTools(server as any);
   registerCalendarTools(server as any);
   registerActivityTools(server as any);
@@ -116,6 +118,13 @@ beforeEach(() => {
     if (path === "/activities/1.json") {
       return { data: { id: 1, type: "TimeEntry", date: "2026-01-01", quantity_in_hours: 1 } };
     }
+    if (path === "/activities/2.json") {
+      return { data: {
+        id: 2, etag: "synthetic-etag", type: "ExpenseEntry", date: "2026-01-01", price: 10,
+        matter: { id: 1, display_number: "SYN-1" },
+        expense_category: { id: 3, name: "Synthetic expense" },
+      } };
+    }
     if (path === "/users/1.json") {
       return { data: { id: 1, name: "Synthetic User", enabled: true } };
     }
@@ -134,6 +143,8 @@ describe("read-only action side effects", () => {
       ["get_contact", { contact_id: 1 }],
       ["list_documents", { matter_id: 1, limit: 25 }],
       ["get_document", { document_id: 1 }],
+      ["list_expense_entries", { status: "unbilled", limit: 25 }],
+      ["get_expense_entry", { activity_id: 2 }],
       ["list_tasks", { limit: 25 }],
       ["list_calendar_entries", { from: "2026-01-01", to: "2026-01-02" }],
       ["list_calendars", {}],
@@ -154,7 +165,7 @@ describe("read-only action side effects", () => {
       expect(result?.isError, name).not.toBe(true);
     }
 
-    expect(mocks.clioGet).toHaveBeenCalledTimes(17);
+    expect(mocks.clioGet).toHaveBeenCalledTimes(19);
     expect(mocks.clioPost).not.toHaveBeenCalled();
     expect(mocks.clioPatch).not.toHaveBeenCalled();
     expect(mocks.clioPut).not.toHaveBeenCalled();
