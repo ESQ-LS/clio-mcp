@@ -356,6 +356,29 @@ describe("controlled contact writes", () => {
     expect(mockClioPatch).not.toHaveBeenCalled();
   });
 
+  it("rejects duplicate IDs in every plural contact association", async () => {
+    mockClioGet.mockResolvedValue({ data: {
+      id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",
+      email_addresses: [{ id: 11, name: "Work", address: "old@example.test" }],
+      phone_numbers: [{ id: 12, name: "Mobile", number: "4165550000" }],
+      addresses: [{ id: 13, name: "Work", street: "1 Old Street" }],
+      web_sites: [{ id: 14, name: "Work", address: "https://old.example.test" }],
+    } });
+    const handlers = getHandlers();
+    const cases = [
+      { email_addresses: [{ id: 11, address: "one@example.test" }, { id: 11, address: "two@example.test" }] },
+      { phone_numbers: [{ id: 12, number: "4165550100" }, { id: 12, number: "4165550200" }] },
+      { addresses: [{ id: 13, city: "Toronto" }, { id: 13, city: "Ottawa" }] },
+      { web_sites: [{ id: 14, address: "https://one.example.test" }, { id: 14, address: "https://two.example.test" }] },
+    ];
+    for (const changes of cases) {
+      const result = await handlers.update_contact({ contact_id: 42, ...changes });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("ID may be supplied only once per mutation");
+    }
+    expect(mockClioPatch).not.toHaveBeenCalled();
+  });
+
   it("preserves existing association labels and defaults only new entries to Work", async () => {
     mockClioGet.mockResolvedValue({ data: {
       id: 42, etag: "contact-v1", name: "Synthetic", type: "Person",

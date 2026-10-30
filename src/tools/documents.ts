@@ -145,14 +145,11 @@ async function createApprovedUploadSnapshot(filePath: string): Promise<UploadSna
     if (sourceStats.size > MAX_DOCUMENT_SIZE) {
       throw new Error("file_path exceeds Clio's 5 GB document limit.");
     }
-    if (sourceStats.size === 0) {
-      await fs.writeFile(snapshotPath, "", { flag: "wx", mode: 0o600 });
-    } else {
-      await pipeline(
-        sourceHandle.createReadStream({ autoClose: false, start: 0, end: sourceStats.size - 1 }),
-        createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }),
-      );
-    }
+    if (sourceStats.size === 0) throw new Error("Empty files cannot be uploaded to Clio.");
+    await pipeline(
+      sourceHandle.createReadStream({ autoClose: false, start: 0, end: sourceStats.size - 1 }),
+      createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }),
+    );
     const snapshotStats = await fs.stat(snapshotPath);
     if (snapshotStats.size !== sourceStats.size) {
       throw new Error("The approved upload file changed while its snapshot was being created.");

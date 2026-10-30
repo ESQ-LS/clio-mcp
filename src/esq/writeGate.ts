@@ -35,6 +35,12 @@ const WRITE_TOOLS = new Set<string>([
   "create_communication",
 ]);
 
+/** Legacy handlers that mutate immediately and must never be production-enabled. */
+const UNSAFE_LEGACY_WRITE_TOOLS = new Set<string>([
+  "log_time_entry",
+  "create_activity",
+]);
+
 function parseEnabled(): Set<string> {
   const raw = process.env.ESQ_WRITE_TOOLS ?? "";
   const names = raw
@@ -47,6 +53,12 @@ function parseEnabled(): Set<string> {
     if (!WRITE_TOOLS.has(name)) {
       console.error(
         `[esq] ESQ_WRITE_TOOLS lists "${name}", which is not a known write tool. Ignoring.`,
+      );
+      continue;
+    }
+    if (UNSAFE_LEGACY_WRITE_TOOLS.has(name)) {
+      console.error(
+        `[esq] Refusing to enable legacy write tool "${name}" because it lacks preview and confirmation controls.`,
       );
       continue;
     }

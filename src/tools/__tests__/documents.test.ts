@@ -62,6 +62,18 @@ describe("controlled document upload", () => {
     expect(audit).not.toContain(preview.proposal.document.sha256);
   });
 
+  it("rejects empty files before preview authorization", async () => {
+    const filePath = path.join(tempDir, "empty.txt");
+    await fs.writeFile(filePath, "");
+    const handlers: Record<string, Function> = {};
+    registerDocumentTools({ registerTool: (name: string, _schema: unknown, handler: Function) => { handlers[name] = handler; } } as any);
+    const result = await handlers.upload_document({ file_path: filePath, matter_id: 99 });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Empty files cannot be uploaded to Clio");
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
   it("opens the approved source with no-follow semantics", async () => {
     const filePath = path.join(tempDir, "synthetic.txt");
     await fs.writeFile(filePath, "synthetic document\n");

@@ -44,6 +44,10 @@ describe("ESQ controlled time-entry write gate", () => {
     ]);
   });
 
+  it("never exposes legacy activity handlers that lack confirmation controls", () => {
+    expect(registeredWith("log_time_entry,create_activity")).toEqual(["list_time_entries"]);
+  });
+
   it("exposes only expressly allowlisted intake writes", () => {
     expect(registeredWith("create_contact,update_contact,create_matter,update_matter")).toEqual([
       "list_time_entries",

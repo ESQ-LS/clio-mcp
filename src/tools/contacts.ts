@@ -247,6 +247,7 @@ function buildContactUpdateData(input: Record<string, unknown>, current: any): R
     );
   }
   if (input.addresses !== undefined) {
+    assertUniqueNestedIds(input.addresses, "address");
     data.addresses = (input.addresses as Array<Record<string, unknown>>).map((changes) => {
       const id = changes.id as number | undefined;
       if (id === undefined) return { name: "Work", ...changes };
@@ -288,12 +289,23 @@ function validatePluralContactEntries(
   currentEntries: any[],
   kind: string,
 ): Array<Record<string, unknown>> {
+  assertUniqueNestedIds(changes, kind);
   return (changes as Array<Record<string, unknown>>).map((entryChanges) => {
     const id = entryChanges.id as number | undefined;
     if (id === undefined) return { name: "Work", ...entryChanges };
     const current = existingEntry(currentEntries, kind, false, id);
     return { ...current, ...entryChanges, id: current.id };
   });
+}
+
+function assertUniqueNestedIds(changes: unknown, kind: string): void {
+  const seen = new Set<number>();
+  for (const entry of changes as Array<Record<string, unknown>>) {
+    const id = entry.id as number | undefined;
+    if (id === undefined) continue;
+    if (seen.has(id)) throw new Error(`A ${kind} ID may be supplied only once per mutation.`);
+    seen.add(id);
+  }
 }
 
 async function validateContactCompany(companyId: unknown): Promise<{ id: number; name: string } | null> {

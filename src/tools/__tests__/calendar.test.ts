@@ -174,6 +174,22 @@ describe("controlled calendar writes", () => {
     expect(mockClioPost).not.toHaveBeenCalled();
   });
 
+  it("rejects calendar entries with non-positive time ranges before API validation", async () => {
+    const handlers = getHandlers();
+    for (const [start_at, end_at] of [
+      ["2026-11-01T10:00", "2026-11-01T09:00"],
+      ["2026-11-01T10:00", "2026-11-01T10:00"],
+    ]) {
+      const result = await handlers.create_calendar_entry({
+        summary: "Synthetic meeting", start_at, end_at, calendar_owner_id: 10,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("end_at must be later than start_at");
+    }
+    expect(mockClioGet).not.toHaveBeenCalled();
+    expect(mockClioPost).not.toHaveBeenCalled();
+  });
+
   it("rejects dates before Clio's 1900 persistence floor", async () => {
     const result = await getHandlers().create_calendar_entry({
       summary: "Historical synthetic event",

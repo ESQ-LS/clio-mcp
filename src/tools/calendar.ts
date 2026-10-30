@@ -163,13 +163,18 @@ export function registerCalendarTools(server: McpServer): void {
       try {
         assertCalendarTimestamps(start_at, end_at);
         assertCalendarDateFloor(start_at, end_at);
+        const normalizedStart = toIso(start_at);
+        const normalizedEnd = toIso(end_at, true);
+        if (normalizedEnd <= normalizedStart) {
+          throw new Error("Calendar end_at must be later than start_at.");
+        }
         const attendeeKeys = (requestedAttendees ?? []).map(({ type, id }) => `${type}:${id}`);
         if (new Set(attendeeKeys).size !== attendeeKeys.length) throw new Error("attendees must be unique by type and ID.");
         if (attendeeKeys.length > 20) throw new Error("No more than 20 attendees may be supplied.");
         const body: Record<string, unknown> = {
           summary,
-          start_at: toIso(start_at),
-          end_at: toIso(end_at, true),
+          start_at: normalizedStart,
+          end_at: normalizedEnd,
           calendar_owner: { id: calendar_owner_id },
         };
         if (description !== undefined)               body.description = description;
